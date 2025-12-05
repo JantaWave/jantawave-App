@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   View,
   Text,
   TextInput,
@@ -10,6 +11,7 @@ import {
   ScrollView,
   useColorScheme,
   Alert,
+  Share,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -27,6 +29,7 @@ export default function CreateStreamScreen() {
   const { user } = useAuth();
 
   const [thumbnail, setThumbnail] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [goLiveNow, setGoLiveNow] = useState(false);
@@ -130,10 +133,14 @@ export default function CreateStreamScreen() {
         return;
       }
       console.log(user.id);
+      const streamDate = goLiveNow
+        ? new Date(Date.now() + 2 * 60 * 1000) // Now + 2 mins
+        : date;
 
       // Prepare payload
       const payload = {
         userId: user.id,
+        title: title,
         youtube: platforms.youtube ? 'true' : undefined,
         facebook: platforms.facebook ? 'true' : undefined,
         instagram: platforms.instagram ? 'true' : undefined,
@@ -141,19 +148,62 @@ export default function CreateStreamScreen() {
         logoUrl: thumbnail || '',
         ticker: 'Live Now',
         description: content,
-        scheduledStartTime: goLiveNow ? new Date().toISOString() : date.toISOString(),
+        scheduledStartTime: streamDate.toISOString(),
       };
 
-      const sessionId = await setupLive(payload);
-      console.log('Session ID:', sessionId);
+      setLoading(true);
+      const response = await setupLive(payload); // Now returns { sessionId, shareUrls }
+      setLoading(false);
 
-      router.push({
-        pathname: '/start-stream',
-        params: { sessionId: sessionId },
-      });
+      if (!response || !response.sessionId) {
+        Alert.alert('Error', 'Failed to create session');
+        return;
+      }
+
+      // ✅ CHECK: Instant vs Scheduled
+      if (goLiveNow) {
+        // 1. Instant: Go to Camera immediately
+        router.push({
+          pathname: '/start-stream',
+          params: { sessionId: response.sessionId },
+        });
+      } else {
+        // 2. Scheduled: Show Confirmation & Redirect to Home
+        let message = 'Stream scheduled successfully!';
+
+        Alert.alert('Success!', message, [
+          {
+            text: 'Share Link',
+            onPress: () => shareStream(response.shareUrls, title),
+          },
+          {
+            text: 'Go to Activities',
+            onPress: () => router.replace('/(tabs)/activity'), // Or your streams list route
+          },
+        ]);
+      }
     } catch (error: any) {
-      console.error('Create stream error:', error.response?.data || error.message);
-      Alert.alert('Error', 'Failed to create livestream. Please try again.');
+      console.error('Create stream error:', error);
+
+      // ✅ Show the specific error from the backend (e.g. "YouTube Error: ...")
+      const serverError = error.response?.data?.error || error.message;
+      Alert.alert('Setup Failed', serverError);
+    }
+  };
+
+  const shareStream = async (urls: any, streamTitle: string) => {
+    if (!urls) return;
+    const link = urls.youtube || urls.facebook || '';
+    if (!link) return;
+
+    try {
+      await Share.share({
+        message: `Join my upcoming stream: "${streamTitle}"! \n${link}`,
+      });
+      // Navigate away after sharing
+      router.replace('/(tabs)/activity');
+    } catch (error) {
+      console.log(error);
     }
   };
 
@@ -431,10 +481,17 @@ export default function CreateStreamScreen() {
         className={`border-t p-4 ${
           isDark ? 'border-gray-700 bg-[#252525]' : 'border-gray-200 bg-gray-50'
         }`}>
-        <TouchableOpacity onPress={handleCreate} className="w-full rounded-xl bg-blue-500 py-3.5">
-          <Text className="text-center text-base font-bold text-white">
-            {goLiveNow ? 'Start Stream' : 'Next'}
-          </Text>
+        <TouchableOpacity
+          onPress={handleCreate}
+          disabled={loading}
+          className="w-full flex-row items-center justify-center rounded-xl bg-blue-500 py-3.5">
+          {loading ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text className="text-center text-base font-bold text-white">
+              {goLiveNow ? 'Start Stream' : 'Next'}
+            </Text>
+          )}
         </TouchableOpacity>
       </View>
     </View>

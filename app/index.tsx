@@ -1,15 +1,5 @@
-// // Ensure to call inside a component, not globally
-//
-// export default function Home() {
-//   return (
-//     <View className="flex-1 items-center justify-center">
-//       <Text className="text-4xl font-bold text-blue-500">Tailwind Works 🎉</Text>
-//     </View>
-//   );
-// }
-
 import { useEffect } from 'react';
-import { useRouter, SplashScreen } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 

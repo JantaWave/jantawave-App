@@ -11,9 +11,9 @@ export async function setupLive(payload) {
     title: payload.title,
     description: payload.description,
     scheduledStartTime: payload.scheduledStartTime,
-    youtubeKey: payload.youtube || '',
-    facebookKey: payload.facebook || '',
-    instagramKey: payload.instagram || '',
+    youtube: payload.youtube || false,
+    facebook: payload.facebook || false,
+    instagram: payload.instagram || false,
     overlays: {
       bannerText: payload.bannerText || '',
       logoUrl: payload.logoUrl || '',
@@ -22,24 +22,23 @@ export async function setupLive(payload) {
   };
   const { data } = await axiosClient.post('/api/v1/streams/setup', body);
   console.log('Hello', data.data.sessionId);
-  return data?.data.sessionId; // { sessionId }
+  return data?.data;
 }
 
 /**
  * Start FFmpeg + WebRTC pipeline
  */
-export async function startLive(sessionId) {
+/**
+ * Start FFmpeg + WebRTC pipeline
+ */
+export async function startLive(sessionId, sdp) {
+  console.log('Sending Offer for session:', sessionId);
+  // You MUST send 'sdp' if you want WebRTC to work!
   const { data } = await axiosClient.post('/api/v1/streams/start', {
     sessionId,
+    sdp,
   });
   return data;
-  /**
-   * {
-   *   sessionId,
-   *   ports: { audioPort, videoPort },
-   *   ff: { pid }
-   * }
-   */
 }
 
 /**
@@ -62,3 +61,62 @@ export async function updateOverlays(sessionId, overlays) {
   });
   return data; // { ok: true }
 }
+
+export async function getPresignedUrl(fileName, fileType) {
+  try {
+    const response = await axiosClient.post('/api/v1/upload/presigned-url', {
+      fileName,
+      fileType,
+    });
+
+    console.log('🔍 Presigned URL Response:', response.data);
+
+    // Handle cases where response might be wrapped in 'data' or returned directly
+    // If backend sends { success: true, data: { ... } } -> we need response.data.data
+    // If backend sends { uploadUrl: ... } directly -> we need response.data
+    const result = response.data?.data || response.data;
+
+    if (!result || !result.uploadUrl) {
+      throw new Error('Invalid server response: Missing uploadUrl');
+    }
+
+    return result;
+  } catch (error) {
+    console.error('❌ API Error (getPresignedUrl):', error);
+    throw error;
+  }
+}
+
+export async function createPost(payload) {
+  console.log('payload', payload);
+  const { data } = await axiosClient.post('/api/v1/posts/create', payload);
+  console.log(data);
+  return data.data;
+}
+
+export async function getUserPosts(userId) {
+  const { data } = await axiosClient.get(`/api/v1/posts/user/${userId}`);
+  return data.data; // Returns array of posts
+}
+
+export const togglePostLike = async (postId, userId) => {
+  console.log(userId, postId, 'in togglelike fn');
+  const res = await axiosClient.post(`/api/v1/posts/${postId}/${userId}/like`);
+  console.log(res);
+  return res.data; // { liked: true/false }
+};
+
+export const getPostComments = async (postId) => {
+  const res = await axiosClient.get(`/api/v1/posts/${postId}/comments`);
+  console.log(res.data);
+  return res.data;
+};
+
+export const commentOnPost = async (postId, content, parentCommentId) => {
+  const res = await axiosClient.post(`/api/v1/posts/${postId}/comment`, {
+    content,
+    parentCommentId,
+  });
+  console.log(res.data);
+  return res.data;
+};

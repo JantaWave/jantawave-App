@@ -1,6 +1,9 @@
+import 'react-native-webrtc';
 import '../global.css';
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
+// import { NavigationContainer } from '@react-navigation/native';
+// import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
@@ -16,6 +19,7 @@ import { View, useColorScheme } from 'react-native';
 
 // Prevent auto-hide splash screen
 SplashScreen.preventAutoHideAsync();
+// const Stack = createNativeStackNavigator();
 
 export default function RootLayout() {
   useFrameworkReady();
@@ -46,7 +50,6 @@ export default function RootLayout() {
           placement="top"
           duration={5000}
           animationType="slide-in"
-          animationDuration={250}
           successColor="green"
           dangerColor="red"
           warningColor="orange"
@@ -56,29 +59,29 @@ export default function RootLayout() {
           offsetTop={40}
           offsetBottom={40}
           swipeEnabled>
+          {/* <NavigationContainer> */}
           <Stack
             screenOptions={{
               headerShown: false,
-              animation: 'slide_from_right', // Smooth transition
+              animation: 'slide_from_right',
               gestureEnabled: true,
             }}>
-            {/* Main App Screens */}
+            {/* Top-Level Screens */}
             <Stack.Screen name="index" />
             <Stack.Screen name="(tabs)" />
 
-            {/* Auth Screens */}
+            {/* Auth */}
             <Stack.Screen name="auth/login" />
             <Stack.Screen name="auth/register" />
 
-            {/* Custom Screens */}
-            <Stack.Screen name="create-stream" />
-            <Stack.Screen name="start-stream" />
-            <Stack.Screen name="new-post" />
-            <Stack.Screen name="chat" />
+            {/* Streaming Routes - Explicitly defined to ensure context availability */}
+            {/* <Stack.Screen name="start-stream/index" /> */}
+            {/* <Stack.Screen name="start-stream/[sessionId]" /> */}
 
             {/* Not Found */}
             <Stack.Screen name="+not-found" />
           </Stack>
+          {/* </NavigationContainer> */}
         </ToastProvider>
       </View>
     </AuthProvider>

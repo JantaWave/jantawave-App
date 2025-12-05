@@ -57,12 +57,7 @@ export default function CommunityScreen() {
   return (
     <View className="flex-1 bg-white dark:bg-[#1a1a1a]">
       {/* ✅ Reusable Header */}
-      <AppHeader
-        title="Community"
-        iconName="group"
-        rightIconName="add-circle-outline"
-        onRightPress={() => Toast.show('Coming soon: Create Post')}
-      />
+      <AppHeader title="Community" iconName="group" />
 
       <ScrollView
         className="flex-1 pt-4"

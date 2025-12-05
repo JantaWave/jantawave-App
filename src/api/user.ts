@@ -19,10 +19,10 @@ export const getUserProfile = async () => {
 //   return response.data;
 // };
 //
-// export const getUserStreams = async () => {
-//   const response = await axiosClient.get('/api/v1/user/streams');
-//   return response.data;
-// };
+export const getUserStreams = async () => {
+  const response = await axiosClient.get('/api/v1/streams/');
+  return response.data.data;
+};
 //
 // export const getUserPosts = async () => {
 //   const response = await axiosClient.get('/api/v1/user/posts');
