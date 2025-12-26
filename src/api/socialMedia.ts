@@ -1,5 +1,4 @@
 // api/socialMedia.ts
-import axiosClientInstance from '../config/axios'; // Use configured axios with interceptors
 import axiosClient from './axiosClient';
 
 const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL;

@@ -1,6 +1,8 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+/* ===================== TYPES ===================== */
+
 interface User {
   id: string;
   first_name: string;
@@ -17,121 +19,125 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
+  accessToken: string | null;
   isLoading: boolean;
   activeRole: 'leader' | 'user';
-  login: (token: string, userData: User) => Promise<void>;
+  login: (accessToken: string, refreshToken: string, userData: User) => Promise<void>;
   logout: () => Promise<void>;
   updateUser: (userData: Partial<User>) => Promise<void>;
   setActiveRole: (role: 'leader' | 'user') => Promise<void>;
+  updateAccessToken: (token: string) => Promise<void>;
   isLeaderMode: () => boolean;
 }
 
+/* ===================== CONSTANTS ===================== */
+
+const ACCESS_KEY = 'access_token';
+const REFRESH_KEY = 'refresh_token';
+const USER_KEY = 'user_data';
+const ROLE_KEY = 'active_role';
+
+// 👇 1. ADD THIS GLOBAL BRIDGE
+// This allows Axios (outside React) to call these functions
+export const authActions = {
+  logout: () => {},
+  updateToken: (token: string) => {},
+};
+
+/* ===================== CONTEXT ===================== */
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+/* ===================== PROVIDER ===================== */
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [activeRole, setActiveRoleState] = useState<'leader' | 'user'>('user');
+  const [isLoading, setIsLoading] = useState(true);
 
-  // ✅ Load persisted auth from storage
+  /* ---------- INITIALIZE AUTH ---------- */
   useEffect(() => {
-    const initializeAuth = async () => {
+    const initAuth = async () => {
       try {
-        const [storedToken, storedUser, storedRole] = await Promise.all([
-          AsyncStorage.getItem('auth_token'),
-          AsyncStorage.getItem('user_data'),
-          AsyncStorage.getItem('active_role'),
+        const [storedAccess, storedRefresh, storedUser, storedRole] = await Promise.all([
+          AsyncStorage.getItem(ACCESS_KEY),
+          AsyncStorage.getItem(REFRESH_KEY),
+          AsyncStorage.getItem(USER_KEY),
+          AsyncStorage.getItem(ROLE_KEY),
         ]);
 
-        if (storedToken && storedUser) {
-          const parsedUser = JSON.parse(storedUser);
-          setToken(storedToken);
+        if (storedAccess && storedRefresh && storedUser) {
+          const parsedUser: User = JSON.parse(storedUser);
+          setAccessToken(storedAccess);
           setUser(parsedUser);
-
-          // 🔐 Only restore leader mode if user is actually a leader
           if (parsedUser.role === 'leader' && storedRole === 'leader') {
             setActiveRoleState('leader');
           } else {
             setActiveRoleState('user');
           }
         }
-      } catch (error) {
-        console.error('Error loading auth:', error);
+      } catch (err) {
+        console.error('❌ Auth initialization failed:', err);
       } finally {
         setIsLoading(false);
       }
     };
-
-    initializeAuth();
+    initAuth();
   }, []);
 
-  // 🔐 Secure login
-  const login = async (accessToken: string, userData: User) => {
-    if (!accessToken) throw new Error('Missing auth token');
-
-    try {
-      const defaultRole: 'leader' | 'user' = userData.role === 'leader' ? 'leader' : 'user';
-
-      await AsyncStorage.multiSet([
-        ['auth_token', accessToken],
-        ['user_data', JSON.stringify(userData)],
-        ['active_role', defaultRole],
-      ]);
-
-      setToken(accessToken);
-      setUser(userData);
-      setActiveRoleState(defaultRole);
-    } catch (error) {
-      console.error('Error during login:', error);
-      throw error;
-    }
+  /* ---------- HELPER FUNCTIONS ---------- */
+  const updateAccessToken = async (newToken: string) => {
+    setAccessToken(newToken);
+    await AsyncStorage.setItem(ACCESS_KEY, newToken);
   };
 
-  // 🚪 Logout user
   const logout = async () => {
-    try {
-      await AsyncStorage.multiRemove(['auth_token', 'user_data', 'active_role']);
-      setUser(null);
-      setToken(null);
-      setActiveRoleState('user');
-    } catch (error) {
-      console.error('Error during logout:', error);
-    }
+    await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, USER_KEY, ROLE_KEY]);
+    setUser(null);
+    setAccessToken(null);
+    setActiveRoleState('user');
   };
 
-  // 👤 Update user info
+  // 👇 2. CONNECT BRIDGE TO STATE
+  // Whenever the provider mounts, we link the global actions to the state functions
+  useEffect(() => {
+    authActions.logout = logout;
+    authActions.updateToken = updateAccessToken;
+  }, [logout]); // dependencies
+
+  /* ---------- LOGIN ---------- */
+  const login = async (newAccessToken: string, newRefreshToken: string, userData: User) => {
+    const defaultRole: 'leader' | 'user' = userData.role === 'leader' ? 'leader' : 'user';
+    await AsyncStorage.multiSet([
+      [ACCESS_KEY, newAccessToken],
+      [REFRESH_KEY, newRefreshToken],
+      [USER_KEY, JSON.stringify(userData)],
+      [ROLE_KEY, defaultRole],
+    ]);
+    setAccessToken(newAccessToken);
+    setUser(userData);
+    setActiveRoleState(defaultRole);
+  };
+
+  /* ---------- UPDATE USER ---------- */
   const updateUser = async (userData: Partial<User>) => {
-    try {
-      if (!user) return;
-      const updatedUser = { ...user, ...userData };
-      setUser(updatedUser);
-      await AsyncStorage.setItem('user_data', JSON.stringify(updatedUser));
-    } catch (error) {
-      console.error('Error updating user:', error);
-    }
+    if (!user) return;
+    const updatedUser = { ...user, ...userData };
+    setUser(updatedUser);
+    await AsyncStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
   };
 
-  // 🔄 Secure role switching
+  /* ---------- ROLE SWITCHING ---------- */
   const setActiveRole = async (role: 'leader' | 'user') => {
     if (!user) return;
-
-    // 🔒 Only allow switching if backend role is leader
     if (user.role !== 'leader') {
-      console.warn('Unauthorized role switch attempt blocked.');
       setActiveRoleState('user');
-      await AsyncStorage.setItem('active_role', 'user');
+      await AsyncStorage.setItem(ROLE_KEY, 'user');
       return;
     }
-
-    try {
-      setActiveRoleState(role);
-      await AsyncStorage.setItem('active_role', role);
-      console.log(`🌍 Global mode switched to: ${role}`);
-    } catch (error) {
-      console.error('Error setting active role:', error);
-    }
+    setActiveRoleState(role);
+    await AsyncStorage.setItem(ROLE_KEY, role);
   };
 
   const isLeaderMode = () => activeRole === 'leader';
@@ -140,13 +146,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
-        token,
+        accessToken,
         isLoading,
         activeRole,
         login,
         logout,
         updateUser,
         setActiveRole,
+        updateAccessToken,
         isLeaderMode,
       }}>
       {children}
@@ -154,10 +161,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 };
 
+/* ===================== HOOK ===================== */
+
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
+    throw new Error('useAuth must be used within AuthProvider');
   }
   return context;
 }

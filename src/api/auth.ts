@@ -36,14 +36,17 @@ export const verifyOTP = async (data: VerifyOTPRequest) => {
 };
 
 export const register = async (data: RegisterRequest) => {
-  console.log('Data from register api', data);
   const response = await axiosClient.post('/api/v1/register', data);
   return response.data;
 };
 
 export const login = async (data: LoginRequest) => {
   const response = await axiosClient.post('/api/v1/login', data);
-  console.log(response.data.data.user);
+  return response.data.data;
+};
+
+export const refreshAccessToken = async () => {
+  const response = await axiosClient.post('/api/v1/auth/refresh');
   return response.data.data;
 };
 
@@ -66,10 +69,10 @@ export const getVillages = async (blockId: string) => {
   const response = await axiosClient.get(`/api/v1/blocks/${blockId}/villages`);
   return response.data;
 };
-export const getAddress = async (villageId: string) => {
+export async function getAddress(villageId: string) {
   const response = await axiosClient.get(`/api/v1/address/${villageId}`);
   return response.data;
-};
+}
 
 export const getTerms = async () => {
   const response = await axiosClient.get('/api/v1/users');

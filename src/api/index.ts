@@ -41,6 +41,12 @@ export async function startLive(sessionId, sdp) {
   return data;
 }
 
+export async function restartStream(sessionId, isCameraOn) {
+  console.log('restarting stream:', sessionId, 'with camera', isCameraOn);
+  const { data } = await axiosClient.post('/api/v1/streams/restart', { sessionId, isCameraOn });
+  return data;
+}
+
 /**
  * Stop livestream
  */
@@ -62,11 +68,12 @@ export async function updateOverlays(sessionId, overlays) {
   return data; // { ok: true }
 }
 
-export async function getPresignedUrl(fileName, fileType) {
+export async function getPresignedUrl(fileName, fileType, type) {
   try {
     const response = await axiosClient.post('/api/v1/upload/presigned-url', {
       fileName,
       fileType,
+      type,
     });
 
     console.log('🔍 Presigned URL Response:', response.data);
@@ -94,9 +101,12 @@ export async function createPost(payload) {
   return data.data;
 }
 
-export async function getUserPosts(userId) {
-  const { data } = await axiosClient.get(`/api/v1/posts/user/${userId}`);
-  return data.data; // Returns array of posts
+export async function getUserPosts(userId: string, limit = 5, cursor: string | null = null) {
+  const { data } = await axiosClient.get(`/api/v1/posts/user/${userId}`, {
+    params: { limit, cursor },
+  });
+  console.log('DATA', data.data);
+  return data.data;
 }
 
 export const togglePostLike = async (postId, userId) => {
@@ -106,10 +116,13 @@ export const togglePostLike = async (postId, userId) => {
   return res.data; // { liked: true/false }
 };
 
-export const getPostComments = async (postId) => {
-  const res = await axiosClient.get(`/api/v1/posts/${postId}/comments`);
-  console.log(res.data);
-  return res.data;
+export const getPostComments = async (postId: string, limit = 5, cursor = null) => {
+  const res = await axiosClient.get(`/api/v1/posts/${postId}/comments`, {
+    params: { limit, cursor },
+  });
+  console.log('post comments', res.data.data);
+
+  return res.data.data;
 };
 
 export const commentOnPost = async (postId, content, parentCommentId) => {
@@ -117,6 +130,29 @@ export const commentOnPost = async (postId, content, parentCommentId) => {
     content,
     parentCommentId,
   });
-  console.log(res.data);
-  return res.data;
+
+  return res.data.data; // ✅ actual comment
+};
+
+export const getPostsForUser = async ({
+  limit = 5,
+  cursor = null,
+}: {
+  limit?: number;
+  cursor?: string | null;
+}) => {
+  const response = await axiosClient.get('/api/v1/posts/user', {
+    params: { limit, cursor },
+  });
+  console.log('Posts', response.data.data);
+
+  return response.data.data;
+};
+
+export const getStreamsForUser = async ({ limit = 10, cursor = null } = {}) => {
+  const response = await axiosClient.get('/api/v1/streams/user', {
+    params: { limit, cursor },
+  });
+  console.log('data', response.data.data);
+  return response.data.data;
 };

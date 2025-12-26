@@ -7,10 +7,15 @@ import {
   ScrollView,
   Dimensions,
   SafeAreaView,
+  Platform, // Ensure Platform is imported
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+// 1. IMPORT SAFE AREA INSETS HOOK
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { mediaDevices } from 'react-native-webrtc';
 import {
   Camera,
   CameraOff,
@@ -18,23 +23,20 @@ import {
   MicOff,
   RefreshCw,
   Monitor,
-  MessageCircle,
   Users,
   X,
   Heart,
-  ChevronDown,
   ChevronUp,
 } from 'lucide-react-native';
-// import { useKeepAwake } from 'expo-keep-awake';
 import { Audio } from 'expo-av';
-import axios from 'axios'; // ✅ ADDED
+import axios from 'axios';
 
 // WebRTC imports
 import { RTCView, MediaStream, registerGlobals } from 'react-native-webrtc';
 import { StreamConnection } from '../webrtc/connections';
-import { getLocalStream, getScreenStream } from '../webrtc/helpers'; // ✅ ADDED
+import { getLocalStream, getScreenStream } from '../webrtc/helpers';
+import { restartStream } from '../api';
 
-// Env var for backend restart
 const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
 const platforms = [
@@ -43,16 +45,12 @@ const platforms = [
   { id: 'youtube', name: 'YouTube', color: ['#FF0000', '#FF0000'], icon: '▶️' },
 ];
 
-const mockCommentsData = [
-  { id: 1, user: 'sarah_m', text: 'Love this stream! 🔥', platform: 'Instagram' },
-  { id: 2, user: 'tech_guru', text: 'Great quality!', platform: 'YouTube' },
-  { id: 3, user: 'mike.j', text: 'Hello from NYC!', platform: 'Facebook' },
-];
-
 export default function StartStreamScreen() {
-  // useKeepAwake(); // Keep screen on
   const router = useRouter();
   const { sessionId, scheduledTime } = useLocalSearchParams();
+
+  // 2. GET INSETS
+  const insets = useSafeAreaInsets();
 
   // --- WebRTC State ---
   const [hasWebRTC, setHasWebRTC] = useState(false);
@@ -61,7 +59,7 @@ export default function StartStreamScreen() {
   const [streamStatus, setStreamStatus] = useState('Ready');
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
-  const [isScreenSharing, setIsScreenSharing] = useState(false); // ✅ Screen Share State
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   // --- UI State ---
   const [showComments, setShowComments] = useState(true);
@@ -87,7 +85,6 @@ export default function StartStreamScreen() {
     registerGlobals();
     if (global.RTCPeerConnection) setHasWebRTC(true);
 
-    // ✅ Enable Background Audio Mode (Critical for Screen Share)
     const enableBackgroundMode = async () => {
       try {
         await Audio.setAudioModeAsync({
@@ -123,7 +120,6 @@ export default function StartStreamScreen() {
     let mounted = true;
     const initCamera = async () => {
       if (cameraPermission?.granted && micPermission?.granted) {
-        // Start with Camera
         const stream = await getLocalStream(facing, true);
         if (mounted) {
           localStreamRef.current = stream;
@@ -153,28 +149,9 @@ export default function StartStreamScreen() {
       setStreamDuration((prev) => prev + 1);
     }, 1000);
 
-    const commentInterval = setInterval(() => {
-      const randomC = mockCommentsData[Math.floor(Math.random() * mockCommentsData.length)];
-      const newC = {
-        ...randomC,
-        id: Date.now(),
-        text: randomC.text + ' ' + ['🔥', '❤️', '👏'][Math.floor(Math.random() * 3)],
-      };
-      setComments((prev) => [...prev.slice(-4), newC]);
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 4000);
-
-    const likeInterval = setInterval(() => {
-      setLikes((prev) => prev + Math.floor(Math.random() * 5) + 1);
-      setShowLikeAnimation(true);
-      setTimeout(() => setShowLikeAnimation(false), 500);
-    }, 2000);
-
     return () => {
       clearInterval(platformInterval);
       clearInterval(durationInterval);
-      clearInterval(commentInterval);
-      clearInterval(likeInterval);
     };
   }, [isStreaming]);
 
@@ -212,21 +189,51 @@ export default function StartStreamScreen() {
       await conn.connect(stream, { sessionId });
 
       conn.socket?.on('social_update', (data: any) => {
-        console.log('Received social update:', data);
-        if (data.views !== undefined) {
-          console.log('views:', data.views);
-          setViewers(data.views);
+        // 1. Update Viewers
+        if (data.views) {
+          setViewers((prev) => ({
+            ...prev,
+            youtube: data.views.youtube || 0,
+            facebook: data.views.facebook || 0,
+            // Recalculate total dynamically
+            total: (data.views.youtube || 0) + (data.views.facebook || 0),
+          }));
         }
-        if (data.comments && data.comments.length > 0) {
-          // Append new comments (avoid duplicates via ID check if needed)
-          setComments((prev) => {
-            // Simple merge strategy: take the last 10 from server
-            return data.comments.slice(-10).reverse();
+
+        if (data.likes) {
+          const newTotalLikes = (data.likes.youtube || 0) + (data.likes.facebook || 0);
+
+          setLikes((prev) => {
+            // If new likes are higher than previous, trigger animation
+            if (newTotalLikes > prev) {
+              setShowLikeAnimation(true);
+              setTimeout(() => setShowLikeAnimation(false), 500);
+            }
+            return newTotalLikes;
           });
-          scrollViewRef.current?.scrollToEnd({ animated: true });
+        }
+        // 2. Update Comments
+        if (data.comments && Array.isArray(data.comments) && data.comments.length > 0) {
+          setComments((prevComments) => {
+            // Create a Set of existing IDs to prevent duplicates
+            const existingIds = new Set(prevComments.map((c) => c.id));
+
+            // Filter out comments we already have
+            const uniqueNewComments = data.comments.filter((c: any) => !existingIds.has(c.id));
+
+            if (uniqueNewComments.length === 0) return prevComments;
+
+            // Combine and keep only the last 50 to save memory
+            const updated = [...prevComments, ...uniqueNewComments];
+            return updated.slice(-50);
+          });
+
+          // Scroll to bottom
+          setTimeout(() => {
+            scrollViewRef.current?.scrollToEnd({ animated: true });
+          }, 100);
         }
       });
-
       setIsStreaming(true);
       setStreamStatus('Live');
     } catch (err) {
@@ -246,40 +253,44 @@ export default function StartStreamScreen() {
   const toggleScreenShare = async () => {
     try {
       if (isScreenSharing) {
-        // Stop Screen
-        await connRef.current?.stopScreenShare();
         setIsScreenSharing(false);
+        await connRef.current?.stopScreenShare();
+        if (isStreaming) {
+          await restartStream(sessionId, isCameraOn);
+        }
       } else {
-        // Start Screen
         const stream = await getScreenStream(!isMuted);
-        await connRef.current?.startScreenShare(stream);
-        setIsScreenSharing(true);
-      }
+        if (!stream) return;
 
-      // ✅ RESTART FFmpeg to pick up new layout
-      if (isStreaming) {
-        await axios.post(`${BACKEND_URL}/api/v1/streams/restart`, { sessionId });
+        setIsScreenSharing(true);
+        await connRef.current?.startScreenShare(stream);
+
+        if (isStreaming) {
+          setTimeout(async () => {
+            console.log('Restarting FFmpeg for Screen Share...');
+            await axios.post(`${BACKEND_URL}/api/v1/streams/restart`, {
+              sessionId,
+              isCameraOn: isCameraOn,
+            });
+          }, 2000);
+        }
       }
     } catch (e) {
       console.error('Screen Share Error:', e);
+      setIsScreenSharing(false);
       Alert.alert('Error', 'Failed to toggle screen share.');
     }
   };
 
   const switchCamera = async () => {
-    // Disable camera switch if screen sharing is active (optional choice)
-    // if (isScreenSharing) return;
-
     const newFacing = facing === 'user' ? 'environment' : 'user';
     setFacing(newFacing);
-
     const newStream = await getLocalStream(newFacing, !isMuted);
 
     if (isStreaming && connRef.current) {
       const videoTrack = newStream.getVideoTracks()[0];
       await connRef.current.replaceVideoTrack(videoTrack);
     }
-
     if (localStreamRef.current) {
       localStreamRef.current.getVideoTracks().forEach((t) => t.stop());
     }
@@ -298,21 +309,17 @@ export default function StartStreamScreen() {
     try {
       const newVideoState = !isCameraOn;
       setIsCameraOn(newVideoState);
-
-      // 1. Toggle Local Track (Visual feedback for user)
       if (localStreamRef.current) {
-        localStreamRef.current.getVideoTracks().forEach((t) => (t.enabled = newVideoState));
-      }
-
-      // 2. ✅ Notify Backend to switch layout (Real Camera vs Placeholder)
-      if (isStreaming) {
-        await axios.post(`${BACKEND_URL}/api/v1/streams/restart`, {
-          sessionId,
-          isCameraOn: newVideoState, // Send the new state
+        localStreamRef.current.getVideoTracks().forEach((t) => {
+          t.enabled = newVideoState;
         });
+      }
+      if (isStreaming) {
+        await restartStream(sessionId, newVideoState);
       }
     } catch (e) {
       console.error('Toggle Video Error:', e);
+      setIsCameraOn(!isCameraOn);
     }
   };
 
@@ -358,7 +365,6 @@ export default function StartStreamScreen() {
             streamURL={localStreamRef.current.toURL()}
             style={{ width: '100%', height: '100%' }}
             objectFit="cover"
-            // Don't mirror if sharing screen or using back camera
             mirror={!isScreenSharing && facing === 'user'}
           />
         ) : (
@@ -369,9 +375,8 @@ export default function StartStreamScreen() {
         )}
       </View>
 
-      {/* ... (Top Overlay: Same as before) ... */}
+      {/* --- Top Overlay --- */}
       <SafeAreaView className="absolute left-0 right-0 top-0 z-20 flex-row items-start justify-between p-4">
-        {/* ... (Copy existing top overlay code) ... */}
         <View className="flex-col gap-2">
           {isStreaming ? (
             <>
@@ -402,31 +407,31 @@ export default function StartStreamScreen() {
           </TouchableOpacity>
           {isStreaming && (
             <>
-              <View className="mb-1 flex-row items-center rounded-full bg-black/60 px-3 py-1.5">
-                <Users color="white" size={14} />
-                <Text className="ml-1.5 text-xs font-bold text-white">
-                  {viewers.toLocaleString()}
-                </Text>
-              </View>
-              <View className={`flex-row items-center rounded-full bg-black/60 px-3 py-1.5 `}>
-                <Heart
-                  color={showLikeAnimation ? '#ef4444' : 'white'}
-                  fill={showLikeAnimation ? '#ef4444' : 'transparent'}
-                  size={14}
-                />
-                <Text className="ml-1.5 text-xs font-bold text-white">
-                  {likes.toLocaleString()}
-                </Text>
+              <View className="mb-1 flex-row items-center gap-2">
+                {/* YouTube View Count */}
+                <View className="flex-row items-center rounded-full bg-red-600/80 px-3 py-1.5">
+                  <Text className="mr-1 text-[10px]">▶️</Text>
+                  <Text className="ml-1 text-xs font-bold text-white">
+                    {viewers.youtube.toLocaleString()}
+                  </Text>
+                </View>
+
+                {/* Total View Count (Optional) */}
+                <View className="flex-row items-center rounded-full bg-black/60 px-3 py-1.5">
+                  <Users color="white" size={14} />
+                  <Text className="ml-1.5 text-xs font-bold text-white">
+                    {viewers.total.toLocaleString()}
+                  </Text>
+                </View>
               </View>
             </>
           )}
         </View>
       </SafeAreaView>
 
-      {/* ... (Comments Overlay: Same as before) ... */}
+      {/* --- Comments Overlay --- */}
       {isStreaming && showComments && (
         <View className="absolute bottom-40 left-4 z-10 w-72">
-          {/* ... Copy comments UI ... */}
           <View className="max-h-48">
             <ScrollView
               ref={scrollViewRef}
@@ -453,7 +458,6 @@ export default function StartStreamScreen() {
         </View>
       )}
 
-      {/* Toggle Comments Button */}
       {isStreaming && !showComments && (
         <TouchableOpacity
           onPress={() => setShowComments(true)}
@@ -463,7 +467,12 @@ export default function StartStreamScreen() {
       )}
 
       {/* --- 4. Bottom Controls --- */}
-      <View className="absolute bottom-0 left-0 right-0 z-20 p-6 pt-0">
+      {/* ✅ FIX: Applied paddingBottom based on insets 
+        We use insets.bottom + 24 (original padding) so it clears the home bar.
+      */}
+      <View
+        className="absolute bottom-0 left-0 right-0 z-20 p-6 pt-0"
+        style={{ paddingBottom: Math.max(insets.bottom, 20) + 24 }}>
         <View className="mb-6 flex-row items-center justify-center gap-6">
           <TouchableOpacity
             onPress={toggleMute}
@@ -487,7 +496,6 @@ export default function StartStreamScreen() {
             <RefreshCw color="white" size={20} />
           </TouchableOpacity>
 
-          {/* ✅ Screen Share Button */}
           <TouchableOpacity
             onPress={toggleScreenShare}
             className={`h-12 w-12 items-center justify-center rounded-full ${isScreenSharing ? 'bg-blue-500' : 'bg-gray-500'}`}>
@@ -498,20 +506,20 @@ export default function StartStreamScreen() {
         {timeLeft > 0 ? (
           <View className="w-full items-center rounded-2xl bg-gray-700 py-4">
             <Text className="text-lg font-bold text-white">
-              Going Live in {formatCountdown(timeLeft)}
+              Starting in {formatCountdown(timeLeft)}
             </Text>
           </View>
         ) : !isStreaming ? (
           <TouchableOpacity onPress={startStreaming}>
-            <View className="w-full items-center rounded-2xl py-4">
+            <View className="w-full items-center rounded-2xl bg-blue-600 py-4">
               <Text className="text-lg font-bold text-white">Go Live Now</Text>
             </View>
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity
-            onPress={stopStreaming}
-            className="w-full items-center rounded-2xl bg-red-600 py-4">
-            <Text className="text-lg font-bold text-white">End Stream</Text>
+          <TouchableOpacity onPress={stopStreaming}>
+            <View className="w-full items-center rounded-2xl bg-red-600 py-4">
+              <Text className="text-lg font-bold text-white">End Stream</Text>
+            </View>
           </TouchableOpacity>
         )}
       </View>

@@ -90,7 +90,7 @@ export async function getScreenStream(audio = true): Promise<MediaStream> {
       video: true,
       audio: audio,
     });
-    return stream as MediaStream;
+    return stream;
   } catch (err) {
     console.error('Error getting screen stream:', err);
     throw err;

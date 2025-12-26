@@ -1,111 +1,165 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   TextInput,
   ScrollView,
-  useColorScheme,
   Switch,
   Image,
   Alert,
   ActivityIndicator,
 } from 'react-native';
 import { MaterialIcons, Feather } from '@expo/vector-icons';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { Video, ResizeMode } from 'expo-av';
 import { getPresignedUrl, createPost } from '../api';
+import { getVillages } from '../api/auth';
 import { useAuth } from '../context/AuthContext';
+import { useAppTheme } from '../context/ThemeContext';
 
 export default function NewPostScreen() {
   const router = useRouter();
-  const colorScheme = useColorScheme();
-  const [notifyOnWhatsApp, setNotifyOnWhatsApp] = useState(false);
-  const isDark = colorScheme === 'dark';
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { isDark } = useAppTheme();
+
+  const [notifyOnWhatsApp, setNotifyOnWhatsApp] = useState(false);
   const [media, setMedia] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<'image' | 'video' | null>(null);
   const [uploading, setUploading] = useState(false);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
 
-  // 1. Pick Image
-  const handlePickImage = async () => {
+  // Village Selection State
+  const [availableVillages, setAvailableVillages] = useState<any[]>([]);
+  const [villages, setVillages] = useState<string[]>([]);
+  const [showVillageList, setShowVillageList] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    const fetchVillagesData = async () => {
+      if (user?.block_id) {
+        try {
+          const res = await getVillages(user.block_id);
+          if (res?.data) {
+            setAvailableVillages(res.data);
+          }
+        } catch (error) {
+          console.error('Failed to fetch villages:', error);
+        }
+      }
+    };
+    fetchVillagesData();
+  }, [user?.block_id]);
+
+  const toggleVillage = (id: string) => {
+    setVillages((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  };
+
+  const filteredVillages = availableVillages.filter((v) =>
+    v.village_name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const handleSelectAll = () => {
+    const itemsToToggle = searchQuery ? filteredVillages : availableVillages;
+    const allIds = itemsToToggle.map((v) => v.village_id.toString());
+    const allSelected = allIds.every((id) => villages.includes(id));
+
+    if (allSelected) {
+      setVillages(villages.filter((id) => !allIds.includes(id)));
+    } else {
+      const newSelection = [...new Set([...villages, ...allIds])];
+      setVillages(newSelection);
+    }
+  };
+
+  const handlePickMedia = async () => {
     try {
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ImagePicker.MediaTypeOptions.All,
         allowsEditing: true,
-        quality: 0.8,
+        quality: 0.5,
+        videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       });
 
       if (!res.canceled && res.assets && res.assets.length > 0) {
         const asset = res.assets[0];
-        await uploadToR2(asset.uri);
+        const MAX_SIZE = 16 * 1024 * 1024; // 16 MB
+
+        if (asset.fileSize && asset.fileSize > MAX_SIZE) {
+          Alert.alert('File Too Large', 'Please upload a file smaller than 16 MB.');
+          return;
+        }
+
+        const type = asset.type === 'video' ? 'video' : 'image';
+        await uploadToR2(asset.uri, type);
       }
     } catch (e) {
-      console.error('Pick Image Error:', e);
+      console.error('Pick Media Error:', e);
+      Alert.alert('Error', 'Failed to pick media');
     }
   };
 
-  // 2. Upload Logic
-  const uploadToR2 = async (uri: string) => {
+  const uploadToR2 = async (uri: string, type: 'image' | 'video') => {
     try {
       setUploading(true);
 
-      const fileName = uri.split('/').pop() || 'image.jpg';
-      const fileType = fileName.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      const extension = uri.split('.').pop()?.toLowerCase();
+      let fileType = 'application/octet-stream';
+      let fileName = `upload_${Date.now()}`;
 
-      console.log('Getting URL...');
-      const { uploadUrl, fileUrl } = await getPresignedUrl(fileName, fileType);
-      console.log('Got URL:', uploadUrl);
+      if (type === 'video') {
+        fileName += `.${extension || 'mp4'}`;
+        fileType = extension === 'mov' ? 'video/quicktime' : 'video/mp4';
+      } else {
+        fileName += `.${extension || 'jpg'}`;
+        fileType = extension === 'png' ? 'image/png' : 'image/jpeg';
+      }
 
-      // ✅ Modern API using fetch
+      const { uploadUrl, fileUrl } = await getPresignedUrl(fileName, fileType, 'posts');
+
       const response = await fetch(uri);
       const blob = await response.blob();
 
       const uploadResponse = await fetch(uploadUrl, {
         method: 'PUT',
-        headers: {
-          'Content-Type': fileType,
-        },
+        headers: { 'Content-Type': fileType },
         body: blob,
       });
 
       if (uploadResponse.ok) {
         const finalUrl = fileUrl.startsWith('http') ? fileUrl : `https://${fileUrl}`;
         setMedia(finalUrl);
-        console.log('Upload Successful:', finalUrl);
+        setMediaType(type);
       } else {
-        console.error('Upload Failed:', uploadResponse.status);
         throw new Error(`Upload failed with status ${uploadResponse.status}`);
       }
     } catch (error: any) {
       console.error('Upload Error:', error);
-      Alert.alert('Error', 'Failed to upload image. ' + error.message);
+      Alert.alert('Error', 'Failed to upload media. ' + error.message);
     } finally {
       setUploading(false);
     }
   };
+
   const handlePublish = async () => {
     if (!title || !content) return Alert.alert('Missing Fields', 'Please add title and content');
-
     try {
-      console.log('Publishing Post...');
-
       await createPost({
-        userId: user?.id, // Ensure user ID is passed
+        userId: user?.id,
         title,
         content,
         mediaUrl: media,
-        mediaType: 'image', // You can detect video vs image from file extension if needed
-        villages: [], // Add logic to collect selected villages if implemented
+        mediaType: mediaType || 'image',
+        villages: villages,
       });
-
       Alert.alert('Success', 'Post published successfully!', [
         { text: 'OK', onPress: () => router.back() },
       ]);
     } catch (error: any) {
-      console.error('Publish Error:', error);
       Alert.alert(
         'Error',
         'Failed to create post. ' + (error.response?.data?.message || error.message)
@@ -114,13 +168,15 @@ export default function NewPostScreen() {
   };
 
   return (
-    <SafeAreaView className={`flex-1 ${isDark ? 'bg-[#101c22]' : 'bg-[#f6f7f8]'}`}>
+    <View className="flex-1 bg-background-light dark:bg-background-dark">
       {/* Header */}
-      <View className="flex-row items-center justify-between border-b border-gray-300 px-5 py-4 dark:border-gray-700">
-        <TouchableOpacity onPress={() => router.back()}>
-          <MaterialIcons name="close" size={28} color={isDark ? '#fff' : '#1f2937'} />
+      <View
+        style={{ paddingTop: insets.top }}
+        className="flex-row items-center justify-between border-b border-border-light px-5 pb-4 dark:border-border-dark">
+        <TouchableOpacity onPress={() => router.back()} className="pt-2">
+          <MaterialIcons name="close" size={28} color={isDark ? '#f8fafc' : '#0f172a'} />
         </TouchableOpacity>
-        <Text className={`text-lg font-bold ${isDark ? 'text-white' : 'text-black'}`}>
+        <Text className="pt-2 text-lg font-bold text-text-primary-light dark:text-text-primary-dark">
           New Post
         </Text>
         <View className="w-6" />
@@ -129,123 +185,205 @@ export default function NewPostScreen() {
       <ScrollView
         className="flex-1 p-5"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 80 }}>
-        {/* Inputs */}
+        contentContainerStyle={{ paddingBottom: 150 }}>
+        {/* Title Input */}
         <TextInput
           placeholder="Post Title"
-          placeholderTextColor={isDark ? '#9ca3af' : '#6b7280'}
+          placeholderTextColor={isDark ? '#94a3b8' : '#64748b'}
           value={title}
           onChangeText={setTitle}
-          className={`mb-4 rounded-lg px-4 py-3 text-base ${
-            isDark ? 'bg-[#1a2831] text-white' : 'bg-gray-100 text-gray-900'
-          }`}
+          className="mb-4 rounded-lg bg-surface-light px-4 py-3 text-base text-text-primary-light dark:bg-surface-dark dark:text-text-primary-dark"
         />
 
+        {/* Content Input */}
         <TextInput
           placeholder="Write your post here..."
-          placeholderTextColor={isDark ? '#9ca3af' : '#6b7280'}
+          placeholderTextColor={isDark ? '#94a3b8' : '#64748b'}
           value={content}
           onChangeText={setContent}
           multiline
           numberOfLines={6}
-          className={`mb-6 rounded-lg px-4 py-3 text-base ${
-            isDark ? 'bg-[#1a2831] text-white' : 'bg-gray-100 text-gray-900'
-          }`}
+          className="mb-6 rounded-lg bg-surface-light px-4 py-3 text-base text-text-primary-light dark:bg-surface-dark dark:text-text-primary-dark"
         />
 
         {/* Media Preview */}
         {media && (
-          <View className="relative mb-6">
-            <Image
-              source={{ uri: media }}
-              className="h-48 w-full rounded-lg bg-gray-200"
-              resizeMode="cover"
-            />
+          <View className="relative mb-6 h-48 w-full overflow-hidden rounded-lg bg-gray-200">
+            {mediaType === 'video' ? (
+              <Video
+                source={{ uri: media }}
+                style={{ width: '100%', height: '100%' }}
+                useNativeControls
+                resizeMode={ResizeMode.COVER}
+                isLooping
+              />
+            ) : (
+              <Image source={{ uri: media }} className="h-full w-full" resizeMode="cover" />
+            )}
+
             <TouchableOpacity
-              onPress={() => setMedia(null)}
+              onPress={() => {
+                setMedia(null);
+                setMediaType(null);
+              }}
               className="absolute right-2 top-2 rounded-full bg-black/50 p-1">
               <MaterialIcons name="close" size={20} color="white" />
             </TouchableOpacity>
           </View>
         )}
 
-        {/* Media Buttons */}
+        {/* Add Media Button */}
         {!media && (
           <>
-            <Text className={`mb-2 text-base font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            <Text className="mb-2 text-base font-bold text-text-primary-light dark:text-text-primary-dark">
               Add Media
             </Text>
-            <View className="gap-3">
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={handlePickImage}
-                disabled={uploading}
-                className={`flex-row items-center gap-4 rounded-lg p-3 ${
-                  isDark ? 'bg-[#1a2831]' : 'bg-white'
-                }`}>
-                <View className="h-10 w-10 items-center justify-center rounded-lg bg-[#13a4ec]/10">
-                  {uploading ? (
-                    <ActivityIndicator color="#13a4ec" size="small" />
-                  ) : (
-                    <MaterialIcons name="image" size={24} color="#13a4ec" />
-                  )}
-                </View>
-                <Text className={`flex-1 text-base ${isDark ? 'text-white' : 'text-gray-800'}`}>
-                  {uploading ? 'Uploading...' : 'Upload Image'}
-                </Text>
-                <MaterialIcons name="arrow-forward-ios" size={16} color="#9ca3af" />
-              </TouchableOpacity>
 
-              <TouchableOpacity
-                activeOpacity={0.8}
-                className={`flex-row items-center gap-4 rounded-lg p-3 ${
-                  isDark ? 'bg-[#1a2831]' : 'bg-white'
-                }`}>
-                <View className="h-10 w-10 items-center justify-center rounded-lg bg-[#13a4ec]/10">
-                  <MaterialIcons name="video-library" size={24} color="#13a4ec" />
-                </View>
-                <Text className={`flex-1 text-base ${isDark ? 'text-white' : 'text-gray-800'}`}>
-                  Upload Video
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={handlePickMedia}
+              disabled={uploading}
+              className="flex-row items-center gap-4 rounded-lg bg-surface-light p-3 dark:bg-surface-dark">
+              <View className="h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                {uploading ? (
+                  <ActivityIndicator color="#2196F3" size="small" />
+                ) : (
+                  <MaterialIcons name="add-a-photo" size={24} color="#2196F3" />
+                )}
+              </View>
+              <View className="flex-1">
+                <Text className="text-base font-semibold text-text-primary-light dark:text-text-primary-dark">
+                  {uploading ? 'Uploading...' : 'Photo / Video'}
                 </Text>
-                <MaterialIcons name="arrow-forward-ios" size={16} color="#9ca3af" />
-              </TouchableOpacity>
-            </View>
+                <Text className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+                  Max size 16MB
+                </Text>
+              </View>
+              <MaterialIcons
+                name="arrow-forward-ios"
+                size={16}
+                color={isDark ? '#94a3b8' : '#64748b'}
+              />
+            </TouchableOpacity>
           </>
         )}
 
-        {/* Other Inputs */}
-        <View className="mt-6">
-          <Text className={`mb-2 text-base font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+        {/* Village Selection */}
+        <View className="my-6">
+          <Text className="mb-2 text-base font-bold text-text-primary-light dark:text-text-primary-dark">
             Target Villages
           </Text>
+
           <TouchableOpacity
             activeOpacity={0.8}
-            className={`flex-row items-center gap-4 rounded-lg p-3 ${
-              isDark ? 'bg-[#1a2831]' : 'bg-white'
-            }`}>
-            <View className="h-10 w-10 items-center justify-center rounded-lg bg-[#13a4ec]/10">
-              <MaterialIcons name="location-pin" size={24} color="#13a4ec" />
+            onPress={() => setShowVillageList(!showVillageList)}
+            className="flex-row items-center gap-4 rounded-lg bg-surface-light p-3 dark:bg-surface-dark">
+            <View className="h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+              <MaterialIcons name="location-pin" size={24} color="#2196F3" />
             </View>
-            <Text className={`flex-1 text-base ${isDark ? 'text-white' : 'text-gray-800'}`}>
-              Select Villages
-            </Text>
-            <MaterialIcons name="arrow-forward-ios" size={16} color="#9ca3af" />
+            <View className="flex-1">
+              <Text className="text-base text-text-primary-light dark:text-text-primary-dark">
+                Select Villages
+              </Text>
+              {villages.length > 0 && (
+                <Text className="text-xs text-primary">{villages.length} selected</Text>
+              )}
+            </View>
+            <MaterialIcons
+              name={showVillageList ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
+              size={24}
+              color={isDark ? '#94a3b8' : '#64748b'}
+            />
           </TouchableOpacity>
+
+          {/* Expandable Village List */}
+          {showVillageList && (
+            <View className="mt-2 overflow-hidden rounded-lg border border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
+              {/* Search Bar */}
+              <View className="px-4 py-3 pb-2">
+                <View className="flex-row items-center rounded-lg border border-border-light bg-background-light px-3 py-2 dark:border-border-dark dark:bg-background-dark">
+                  <Feather name="search" size={18} color={isDark ? '#94a3b8' : '#64748b'} />
+                  <TextInput
+                    placeholder="Search Villages..."
+                    placeholderTextColor={isDark ? '#94a3b8' : '#64748b'}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    className="ml-2 flex-1 text-sm text-text-primary-light dark:text-text-primary-dark"
+                  />
+                </View>
+              </View>
+
+              {/* Select All/Visible Button */}
+              <View className="flex-row items-center justify-between border-b border-border-light px-4 py-3 dark:border-border-dark">
+                <Text className="font-medium text-text-secondary-light dark:text-text-secondary-dark">
+                  {searchQuery ? 'Filtered Villages' : 'Available Villages'}
+                </Text>
+                <TouchableOpacity onPress={handleSelectAll}>
+                  <Text className="text-sm font-bold text-primary">
+                    {(searchQuery ? filteredVillages : availableVillages).every((v) =>
+                      villages.includes(v.village_id.toString())
+                    )
+                      ? 'Deselect'
+                      : 'Select'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Village List */}
+              {filteredVillages.length > 0 ? (
+                filteredVillages.map((v) => {
+                  const isSelected = villages.includes(v.village_id.toString());
+                  return (
+                    <TouchableOpacity
+                      key={v.village_id}
+                      onPress={() => toggleVillage(v.village_id.toString())}
+                      className="flex-row items-center justify-between border-b border-border-light px-4 py-3 dark:border-border-dark">
+                      <Text
+                        className={`text-sm ${
+                          isSelected
+                            ? 'text-primary'
+                            : 'text-text-primary-light dark:text-text-primary-dark'
+                        }`}>
+                        {v.village_name}
+                      </Text>
+                      <MaterialIcons
+                        name={isSelected ? 'check-box' : 'check-box-outline-blank'}
+                        size={24}
+                        color={isSelected ? '#2196F3' : isDark ? '#94a3b8' : '#64748b'}
+                      />
+                    </TouchableOpacity>
+                  );
+                })
+              ) : (
+                <View className="p-4">
+                  <Text className="text-center text-text-secondary-light dark:text-text-secondary-dark">
+                    {searchQuery ? 'No villages found.' : 'No villages found in your block.'}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
-        <View className="mb-6 mt-6">
-          <View className="flex-row items-center justify-between">
-            <View className="flex-row items-center gap-2">
-              <Feather name="share-2" size={18} color="#25D366" />
-              <Text className="text-lg font-medium text-slate-700 dark:text-slate-300">
-                Notify on WhatsApp
-              </Text>
+        {/* WhatsApp Notification Toggle */}
+        <View className="mb-6">
+          <View className="flex-row items-center justify-between rounded-lg bg-surface-light p-4 dark:bg-surface-dark">
+            <View className="flex-row items-center gap-3">
+              <Feather name="message-circle" size={20} color="#25D366" />
+              <View>
+                <Text className="text-base font-medium text-text-primary-light dark:text-text-primary-dark">
+                  WhatsApp Alert
+                </Text>
+                <Text className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+                  Notify users immediately
+                </Text>
+              </View>
             </View>
             <Switch
               value={notifyOnWhatsApp}
               onValueChange={setNotifyOnWhatsApp}
-              thumbColor={notifyOnWhatsApp ? '#ffffff' : '#e5e5e5'}
-              trackColor={{ true: '#25D366', false: '#888888' }}
+              thumbColor="#ffffff"
+              trackColor={{ true: '#25D366', false: isDark ? '#262626' : '#e2e8f0' }}
             />
           </View>
         </View>
@@ -253,18 +391,21 @@ export default function NewPostScreen() {
 
       {/* Publish Button */}
       <View
-        className={`absolute bottom-0 w-full border-t px-5 py-4 ${
-          isDark ? 'border-gray-700 bg-[#101c22]' : 'border-gray-200 bg-[#f6f7f8]'
-        }`}>
+        style={{ paddingBottom: insets.bottom > 0 ? insets.bottom : 20 }}
+        className="absolute bottom-0 w-full border-t border-border-light bg-surface-light px-5 pt-3 dark:border-border-dark dark:bg-surface-dark">
         <TouchableOpacity
           onPress={handlePublish}
           disabled={uploading || !media}
-          className={`w-full rounded-xl py-4 ${uploading || !media ? 'bg-gray-400' : 'bg-[#13a4ec]'}`}>
+          className={`w-full rounded-xl py-4 ${
+            uploading || !media
+              ? 'bg-text-secondary-light dark:bg-text-secondary-dark'
+              : 'bg-primary'
+          }`}>
           <Text className="text-center text-base font-bold text-white">
             {uploading ? 'Uploading...' : 'Publish'}
           </Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }

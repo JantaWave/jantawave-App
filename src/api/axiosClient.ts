@@ -1,154 +1,120 @@
-import axios, { AxiosError } from "axios";
-import { Platform } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { authActions } from '@/src/context/AuthContext'; // ✅ Bridge Import
 
-// Use EXPO_PUBLIC_ prefix
+const ACCESS_KEY = 'access_token';
+const REFRESH_KEY = 'refresh_token';
 const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-// Debug: Log to see if it's loaded
-if (__DEV__) {
-  console.log("API URL:", API_URL);
-}
-
-if (!API_URL) {
-  console.error("⚠️ EXPO_PUBLIC_BACKEND_URL is not set! Check your .env file");
-}
 
 const axiosClient = axios.create({
   baseURL: API_URL,
   timeout: 30000,
   headers: {
-    "Content-Type": "application/json",
-    "X-Platform": Platform.OS,
+    'Content-Type': 'application/json',
+    'X-Platform': Platform.OS,
   },
 });
 
-// Request interceptor
+let isRefreshing = false;
+let failedQueue: any[] = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach((prom) => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+  failedQueue = [];
+};
+
+// Request Interceptor
 axiosClient.interceptors.request.use(
   async (config) => {
-    if (__DEV__) {
-      console.log("Making request to:", config.baseURL + config.url);
+    const token = await AsyncStorage.getItem(ACCESS_KEY);
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
-
-    try {
-      const token = await AsyncStorage.getItem("auth_token");
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
-    } catch (error) {
-      console.error("Error retrieving auth token:", error);
-    }
-
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  },
+  (error) => Promise.reject(error)
 );
 
-// Response interceptor
+// Response Interceptor
 axiosClient.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    // Enhanced error logging
-    if (__DEV__) {
-      console.error("API Error:", {
-        url: error.config?.url,
-        method: error.config?.method?.toUpperCase(),
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        message: error.message,
-        data: error.response?.data,
-      });
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+
+    // 1. Detect 401 (Unauthorized)
+    if (error.response?.status === 400) {
+      console.log('❌ API 400 Error:', JSON.stringify(error.response.data, null, 2));
     }
 
-    // Handle 401 Unauthorized
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !originalRequest._retry) {
+      if (isRefreshing) {
+        return new Promise(function (resolve, reject) {
+          failedQueue.push({ resolve, reject });
+        })
+          .then((token) => {
+            originalRequest.headers.Authorization = `Bearer ${token}`;
+            return axiosClient(originalRequest);
+          })
+          .catch((err) => Promise.reject(err));
+      }
+
+      originalRequest._retry = true;
+      isRefreshing = true;
+
       try {
-        await AsyncStorage.removeItem("auth_token");
-        // Optional: Navigate to login screen or trigger logout event
-        // You can add a callback or event emitter here
-      } catch (storageError) {
-        console.error("Error clearing auth token:", storageError);
+        const refreshToken = await AsyncStorage.getItem(REFRESH_KEY);
+
+        if (!refreshToken) {
+          throw new Error('No refresh token available');
+        }
+
+        // 2. Call Backend Refresh Endpoint
+        const response = await axios.post(`${API_URL}/api/v1/auth/refresh-token`, {
+          refreshToken: refreshToken,
+        });
+
+        // ⚠️ CRITICAL FIX: Extract data correctly based on your ApiResponse class
+        // Usually it's in response.data.data
+        const { accessToken, refreshToken: newRefreshToken } = response.data.data || response.data;
+
+        // 3. Update Storage (Save BOTH tokens)
+        await AsyncStorage.setItem(ACCESS_KEY, accessToken);
+
+        // ✅ CRITICAL: Save the NEW refresh token (Token Rotation)
+        if (newRefreshToken) {
+          await AsyncStorage.setItem(REFRESH_KEY, newRefreshToken);
+        }
+
+        // 4. Update React Context via Bridge
+        authActions.updateToken(accessToken);
+
+        // 5. Retry Original Request
+        axiosClient.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
+        originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+
+        processQueue(null, accessToken);
+        return axiosClient(originalRequest);
+      } catch (refreshError) {
+        // 6. Refresh Failed -> Logout
+        processQueue(refreshError, null);
+        console.error('Session expired, logging out...');
+
+        authActions.logout(); // ✅ Clears Context & Redirects to Login
+        return Promise.reject(refreshError);
+      } finally {
+        isRefreshing = false;
       }
     }
 
-    // Network error handling
-    if (error.message === "Network Error" || !error.response) {
-      return Promise.reject({
-        ...error,
-        message:
-          "Network connection failed. Please check your internet connection.",
-      });
-    }
-
-    // Timeout error handling
-    if (error.code === "ECONNABORTED") {
-      return Promise.reject({
-        ...error,
-        message: "Request timeout. Please try again.",
-      });
-    }
-
     return Promise.reject(error);
-  },
+  }
 );
-
-// Optional: Add retry logic for failed requests
-export const setupRetryInterceptor = (retries = 3, retryDelay = 1000) => {
-  axiosClient.interceptors.response.use(undefined, async (error) => {
-    const config = error.config;
-
-    if (!config || !config.retry) {
-      config.retry = 0;
-    }
-
-    // Don't retry on 4xx errors (except 429 rate limit)
-    if (
-      error.response?.status >= 400 &&
-      error.response?.status < 500 &&
-      error.response?.status !== 429
-    ) {
-      return Promise.reject(error);
-    }
-
-    if (config.retry >= retries) {
-      return Promise.reject(error);
-    }
-
-    config.retry += 1;
-
-    // Exponential backoff
-    const delay = retryDelay * Math.pow(2, config.retry - 1);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-
-    if (__DEV__) {
-      console.log(`Retrying request (${config.retry}/${retries})...`);
-    }
-
-    return axiosClient(config);
-  });
-};
-
-// Helper function to check API health
-export const checkAPIHealth = async (): Promise<boolean> => {
-  try {
-    await axiosClient.get("/health");
-    return true;
-  } catch (error) {
-    console.error("API health check failed:", error);
-    return false;
-  }
-};
-
-// Helper to clear all auth data
-export const clearAuthData = async () => {
-  try {
-    await AsyncStorage.removeItem("auth_token");
-    // Add any other auth-related storage keys here
-  } catch (error) {
-    console.error("Error clearing auth data:", error);
-  }
-};
 
 export default axiosClient;

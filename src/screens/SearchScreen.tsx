@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,124 +6,261 @@ import {
   TouchableOpacity,
   Image,
   FlatList,
-  ScrollView,
-  useColorScheme,
+  ActivityIndicator,
+  Keyboard,
 } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, Feather } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
+import debounce from 'lodash/debounce';
+import { useAppTheme } from '../context/ThemeContext';
+import { searchLeaders } from '../api/user';
+import { getInitials } from '../utils/getInitials';
+
+// --- TYPES ---
+interface Leader {
+  id: string;
+  first_name: string;
+  last_name: string;
+  avatar_url: string | null;
+  role: 'leader';
+  village_name?: string;
+  block_name?: string;
+}
+
+const STORAGE_KEY = '@recent_leaders_search';
 
 export default function DiscoverLeadersScreen() {
-  const colorScheme = useColorScheme();
-  const isDark = colorScheme === 'dark';
+  const router = useRouter();
+  const { colors, isDark } = useAppTheme();
 
-  const [selectedCategory, setSelectedCategory] = useState('All');
+  // --- STATE ---
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Leader[]>([]);
+  const [recentLeaders, setRecentLeaders] = useState<Leader[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const [leaders, setLeaders] = useState([
-    {
-      id: '1',
-      name: 'Alex Morgan',
-      username: '@alex_morgan',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuDDHA4ph4iSo33bVSDHLtOqEbYlxe6IeCEIv945v4YAtcMmbGNGVDCytk7tsVQixgLtWCg6oTqOYCeif4vJcU2S_DE7NrXxWH0LA7m46N_QmpIj_oRzb9OlfZgRA00Po5niBYCgoDM-yXrkD59E_gXThcjyTvBjFBZV_HY10VotY05zg9cGsPoFK-Wt11Vf10E5kG7GytbfYZPo7PQ-dRG7pHG80DeZV8t_X0H7l7G5mfnhc3Mgw7RHALvI-K_AHuudCCVYhBrVdy8',
-      isFollowing: false,
-    },
-    {
-      id: '2',
-      name: 'Samantha Bee',
-      username: '@samanthabee',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuDWHtueV6c4FuliZU8x-ECQG7pXlKQwCJu_iQY6WBeLU5LcnS_Pe0wki9sXYg4SF2HDec7GA_YCoxuXkghfhfkO8UxEt0OctOXLc1Lm1fjMoVf4vUEz8I9NZuCEHkxxQKb3bRZK3u1T4b5gsHbngQrdoMC7dQjx7sgnZ62vEl7-XTTcqDWlYTe9yxHIsn0-c4TkYzkebtGRwq0ZO-dfBOaOhOaew5Go-LOjdwzKmKdNWRFEPnnqACzTqNfYeurF1loD8aBvGf-EjWc',
-      isFollowing: true,
-    },
-    {
-      id: '3',
-      name: 'Casey Neistat',
-      username: '@caseyneistat',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuDyWNjqQ8xuVgDDC_4PJC2PCQrRaqlaxCgFsfPQWwx9nn86noTSBEYEH4ccLOxLmTj9j5WRey93EYsWSQBWslQfwiScO8ffzPb8a1gNBqn5GD83wVAvh_H4ncdr2h79HnPAeXPONSwlUaETFXaxriV3CM04KVmVLGnuuB2jwTEVJaF2WyM6ZIiKMOq6m6NBg2fC9PtBj8QsVKNZPPF5Hgwdp33UmTzkJ_aV0q55eGiW4iL2SZh-ri3fpz8pH5gGSUmcK_IjDdeiAAk',
-      isFollowing: false,
-    },
-    {
-      id: '4',
-      name: 'Lilly Singh',
-      username: '@iisuperwomanii',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuBhVEeX8AYEjBz0MXblRjw2Cx1P72vRswHNQQTJreG95ktfY0EdXpL6_XU1SAGGSUd-HHjuaARrYiD3sW_5pjsgL4lrKvFCBtjNge6ISiyQpgDyhJl3gBGNKmdmAzvIfSCbbjvV0DAt_huQ--sMUrXtHIYdZJeM0QuqsuauB6YeJ_dKhucS_QqNFSj00JSkHKI70im2SXYPHGB0hcUXJFw8zD3YvtAGpw6XkIt2RkjM4xK2ZfrrxVGk8Vw0m0qF6bUrxRgHHwxMRGA',
-      isFollowing: false,
-    },
-    {
-      id: '5',
-      name: 'Emma Chamberlain',
-      username: '@emmachamberlain',
-      image:
-        'https://lh3.googleusercontent.com/aida-public/AB6AXuDNIjCZB_reNvW9-ZFqWE6b4ON4XiG08_HQlPoXnHnYsgmYaJENz3kkAd3L2e6bk81vR2a9kOH-4m2WfKtMnrPdtfbCJI5RlXnrx_50JewUNt1VQS9zngf0wbAjmcQTz-94cgM46eguCFTAAdIwXVPrP9CMbX-fWLZr0Rtsyu7HgG3x3WQcDHn_wUFv7cbiVUS-TI0hhmtPvFZWF_6Vv1DP619UO2GlhfOUGbIymryvgWm6aZjNTBmb8lJ3YnqcNwXz4Yr8Xobm0zY',
-      isFollowing: true,
-    },
-  ]);
+  // --- LOAD HISTORY ---
+  useEffect(() => {
+    loadRecentHistory();
+  }, []);
 
-  const toggleFollow = (id) => {
-    setLeaders((prev) =>
-      prev.map((leader) =>
-        leader.id === id ? { ...leader, isFollowing: !leader.isFollowing } : leader
-      )
-    );
+  const loadRecentHistory = async () => {
+    try {
+      const jsonValue = await AsyncStorage.getItem(STORAGE_KEY);
+      if (jsonValue != null) {
+        setRecentLeaders(JSON.parse(jsonValue));
+      }
+    } catch (e) {
+      console.error('Failed to load history', e);
+    }
   };
 
+  // --- SAVE HISTORY ---
+  const addToRecent = async (leader: Leader) => {
+    try {
+      const filtered = recentLeaders.filter((item) => item.id !== leader.id);
+      const updated = [leader, ...filtered].slice(0, 5); // Keep max 5
+      setRecentLeaders(updated);
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {
+      console.error('Failed to save history', e);
+    }
+  };
+
+  const clearHistory = async () => {
+    setRecentLeaders([]);
+    await AsyncStorage.removeItem(STORAGE_KEY);
+  };
+
+  // --- API SEARCH ---
+  const searchApi = async (text: string) => {
+    if (!text.trim()) {
+      setSearchResults([]);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const response = await searchLeaders(text);
+      // Ensure we treat the response correctly (handle if it returns { data: [...] } or just [...])
+      const data = response.data || response;
+      setSearchResults(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Search error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const debouncedSearch = useCallback(debounce(searchApi, 500), []);
+
+  const handleSearchChange = (text: string) => {
+    setSearchQuery(text);
+    if (text.length > 0) {
+      setLoading(true);
+      debouncedSearch(text);
+    } else {
+      setSearchResults([]);
+      setLoading(false);
+    }
+  };
+
+  const handleSelectLeader = (leader: Leader) => {
+    Keyboard.dismiss();
+    addToRecent(leader);
+
+    // Navigate to the dynamic route [id].tsx
+    router.push({
+      pathname: '/leader-profile/[id]',
+      params: { id: leader.id },
+    });
+  };
+
+  // --- RENDER ITEM ---
+  const renderLeaderItem = ({ item, isHistory = false }: { item: Leader; isHistory?: boolean }) => (
+    <TouchableOpacity
+      onPress={() => handleSelectLeader(item)}
+      activeOpacity={0.7}
+      className={`mb-3 flex-row items-center justify-between rounded-xl p-3 ${
+        isDark ? 'bg-[#252525]' : 'border border-gray-200 bg-white'
+      }`}>
+      <View className="flex-row items-center gap-3">
+        {item.avatar_url ? (
+          <Image source={{ uri: item.avatar_url }} className="h-12 w-12 rounded-full bg-gray-300" />
+        ) : (
+          <View className="h-12 w-12 items-center justify-center rounded-full bg-blue-500">
+            <Text className="text-xl font-black text-white">
+              {getInitials(item?.first_name, item?.last_name)}
+            </Text>
+          </View>
+        )}
+
+        <View>
+          <Text className={`text-base font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            {item.first_name} {item.last_name}
+          </Text>
+          <View className="flex-row items-center gap-1">
+            {item.village_name && (
+              <Text className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                {item.village_name} {item.block_name ? `• ${item.block_name}` : ''}
+              </Text>
+            )}
+            {isHistory && <Feather name="clock" size={10} color={isDark ? '#9ca3af' : '#6b7280'} />}
+          </View>
+        </View>
+      </View>
+      <Feather name="chevron-right" size={20} color={isDark ? '#555' : '#ccc'} />
+    </TouchableOpacity>
+  );
+
   return (
-    <View className="flex-1 bg-[#1a1a1a]">
-      {/* Search Header */}
-      <View className="px-4 pb-3 pt-12">
-        <View className="relative">
+    <View className={`flex-1 ${isDark ? 'bg-[#1a1a1a]' : 'bg-gray-50'}`}>
+      {/* --- HEADER --- */}
+      <View
+        className={`flex-row items-center gap-3 px-4 pb-4 pt-14 ${isDark ? 'bg-[#1a1a1a]' : 'bg-white shadow-sm'}`}>
+        {/* 1. Back Button */}
+        <TouchableOpacity
+          onPress={() => router.back()}
+          className={`-ml-2 rounded-full p-2 ${isDark ? 'active:bg-gray-800' : 'active:bg-gray-100'}`}>
+          <Feather name="arrow-left" size={24} color={isDark ? '#fff' : '#000'} />
+        </TouchableOpacity>
+
+        {/* 2. Search Input Container */}
+        <View className="relative flex-1">
           <MaterialIcons
             name="search"
             size={22}
             color="#9ca3af"
-            className="absolute left-3 top-3"
+            className="absolute left-3 top-3 z-10"
           />
           <TextInput
-            placeholder="Search for leaders"
+            placeholder="Search leaders..."
             placeholderTextColor="#9ca3af"
             value={searchQuery}
-            onChangeText={setSearchQuery}
-            className="rounded-xl bg-[#252525] py-3 pl-10 pr-4 text-base text-white"
+            onChangeText={handleSearchChange}
+            className={`rounded-xl py-3 pl-10 pr-10 text-base ${
+              isDark ? 'bg-[#252525] text-white' : 'bg-gray-100 text-gray-900'
+            }`}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoFocus={true} // Focus automatically for better UX
           />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity
+              onPress={() => handleSearchChange('')}
+              className="absolute right-3 top-3 z-20">
+              <Feather name="x" size={18} color="#9ca3af" />
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      {/* Leaders */}
-      <FlatList
-        data={leaders.filter((l) => l.name.toLowerCase().includes(searchQuery.toLowerCase()))}
-        keyExtractor={(item) => item.id}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          paddingHorizontal: 16,
-          paddingBottom: 100,
-        }}
-        renderItem={({ item }) => (
-          <View className="mb-4 flex-row items-center justify-between rounded-xl bg-[#252525] p-4">
-            <View className="flex-row items-center space-x-3">
-              <Image source={{ uri: item.image }} className="mr-2 h-12 w-12 rounded-full" />
-              <View>
-                <Text className="text-base font-bold text-white">{item.name}</Text>
-                <Text className="text-sm text-white/50">{item.username}</Text>
+      {/* --- CONTENT --- */}
+      <View className="flex-1 px-4 pt-4">
+        {searchQuery.length > 0 ? (
+          <>
+            {loading ? (
+              <View className="mt-10 items-center">
+                <ActivityIndicator size="large" color="#2196F3" />
+                <Text className={`mt-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                  Searching JantaWave...
+                </Text>
               </View>
-            </View>
-            <TouchableOpacity
-              onPress={() => toggleFollow(item.id)}
-              activeOpacity={0.8}
-              className={`rounded-full px-4 py-2 ${
-                item.isFollowing ? 'bg-white/10' : 'bg-[#13a4ec]'
-              }`}>
-              <Text
-                className={`text-sm font-bold ${
-                  item.isFollowing ? 'text-white/80' : 'text-white'
-                }`}>
-                {item.isFollowing ? 'Following' : 'Follow'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+            ) : (
+              <FlatList
+                data={searchResults}
+                keyExtractor={(item) => item.id}
+                showsVerticalScrollIndicator={false}
+                renderItem={({ item }) => renderLeaderItem({ item })}
+                ListEmptyComponent={
+                  <View className="mt-10 items-center">
+                    <Text
+                      className={`text-lg font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                      No leaders found
+                    </Text>
+                    <Text className={`text-sm ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                      Try searching for a different village or name.
+                    </Text>
+                  </View>
+                }
+              />
+            )}
+          </>
+        ) : (
+          /* Recent History */
+          <>
+            {recentLeaders.length > 0 && (
+              <View className="mb-3 flex-row items-center justify-between">
+                <Text
+                  className={`text-sm font-bold uppercase tracking-wider ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                  Recent Searches
+                </Text>
+                <TouchableOpacity onPress={clearHistory}>
+                  <Text className="text-xs font-medium text-red-500">Clear All</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <FlatList
+              data={recentLeaders}
+              keyExtractor={(item) => item.id}
+              showsVerticalScrollIndicator={false}
+              renderItem={({ item }) => renderLeaderItem({ item, isHistory: true })}
+              ListEmptyComponent={
+                <View className="mt-20 items-center opacity-60">
+                  <Feather name="users" size={48} color={isDark ? '#444' : '#ccc'} />
+                  <Text
+                    className={`mt-4 text-center font-medium ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    Search for leaders in your block{'\n'}to see their updates.
+                  </Text>
+                </View>
+              }
+            />
+          </>
         )}
-      />
+      </View>
     </View>
   );
 }

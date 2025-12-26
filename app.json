@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "JantaWave",
-    "slug": "jantawave",
+    "name": "e-Janta",
+    "slug": "e-janta",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -10,7 +10,8 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.jantawave.app"
+      "bundleIdentifier": "com.jantawave.ejanta",
+      "bitcode": false
     },
     "android": {
       "adaptiveIcon": {
@@ -21,7 +22,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.jantawave.app",
+      "package": "com.jantawave.ejanta",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -33,7 +34,8 @@
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
-        "android.permission.WAKE_LOCK"
+        "android.permission.WAKE_LOCK",
+        "android.permission.SYSTEM_ALERT_WINDOW"
       ]
     },
     "web": {
@@ -77,12 +79,15 @@
       "typedRoutes": true,
       "reactCompiler": true
     },
+    "owner": "aviraj-jantawave",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "c6610296-5b1d-4df2-ad0f-d3502243633d"
+        "projectId": "f61b400e-df52-476b-9050-ebf42b9816dd"
       }
-    },
-    "owner": "aviraj-jantawave"
+    }
   }
 }

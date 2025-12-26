@@ -12,12 +12,13 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
-import { getUserProfile } from '../api/user';
+import { getUserProfile, getUserProfileStats } from '../api/user';
 import { useToast } from 'react-native-toast-notifications';
 import { MaterialIcons } from '@expo/vector-icons';
 import { getErrorMessage } from '../utils/getErrorMessage';
 import { getInitials, capitalize } from '../utils/getInitials';
 
+// Social Media Connection API functions (you'll need to implement these)
 import {
   connectYouTube,
   disconnectSocialMedia,
@@ -26,9 +27,7 @@ import {
 
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
-
-// Important: This tells WebBrowser to warm up for better performance
-WebBrowser.maybeCompleteAuthSession();
+import { formatCount } from '../utils/formatters';
 
 export default function ProfileScreen() {
   const Toast = useToast();
@@ -38,6 +37,7 @@ export default function ProfileScreen() {
   const isDark = colorScheme === 'dark';
   const [loading, setLoading] = useState(false);
   const [profileData, setProfileData] = useState<any>(null);
+  const [profileStats, setProfileStats] = useState<any>(null);
   const [socialConnections, setSocialConnections] = useState({
     youtube: false,
     facebook: false,
@@ -46,49 +46,12 @@ export default function ProfileScreen() {
   const [showSocialModal, setShowSocialModal] = useState(false);
   const [connectingPlatform, setConnectingPlatform] = useState<string | null>(null);
 
-  // Handle deep link when returning from OAuth
-  useEffect(() => {
-    const handleDeepLink = (event: { url: string }) => {
-      console.log('📱 Deep link received:', event.url);
-
-      try {
-        const url = new URL(event.url);
-        const connected = url.searchParams.get('connected');
-        const google_sub = url.searchParams.get('google_sub');
-
-        if (connected === 'true') {
-          console.log('✅ OAuth successful! google_sub:', google_sub);
-          Toast.show('YouTube connected successfully!', { type: 'success' });
-
-          // Refresh social connections after successful OAuth
-          setTimeout(() => {
-            fetchSocialConnections();
-          }, 1000);
-        }
-      } catch (error) {
-        console.error('Error parsing deep link:', error);
-      }
-    };
-
-    // Listen for deep links
-    const subscription = Linking.addEventListener('url', handleDeepLink);
-
-    // Check if app was opened with a deep link
-    Linking.getInitialURL().then((url) => {
-      if (url) {
-        handleDeepLink({ url });
-      }
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-
   useEffect(() => {
     fetchProfile();
     fetchSocialConnections();
+    fetchProfileStats();
   }, []);
+  console.log(user?.id);
 
   const fetchProfile = async () => {
     try {
@@ -103,21 +66,26 @@ export default function ProfileScreen() {
       setLoading(false);
     }
   };
+  const fetchProfileStats = async () => {
+    try {
+      setLoading(true);
+      const data = await getUserProfileStats();
+      setProfileStats(data);
+    } catch (error: any) {
+      Toast.show(getErrorMessage(error), {
+        type: 'warning',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchSocialConnections = async () => {
     try {
-      console.log('🔄 Fetching social connections...');
       const response = await getSocialMediaConnections();
-      console.log('📊 Social connections response:', response);
-
       setSocialConnections(response.data);
-
-      // Log individual connection status
-      console.log('YouTube connected:', response.data.youtube);
-      console.log('Facebook connected:', response.data.facebook);
-      console.log('Instagram connected:', response.data.instagram);
     } catch (error: any) {
-      console.error('❌ Failed to fetch social connections:', error);
+      console.error('Failed to fetch social connections:', error);
     }
   };
 
@@ -128,55 +96,31 @@ export default function ProfileScreen() {
         return;
       }
 
-      // Check if user exists
-      if (!user?.id) {
-        Toast.show('User not authenticated', { type: 'danger' });
-        return;
-      }
-
       setConnectingPlatform(platform);
 
-      console.log('🎬 Starting YouTube OAuth for user:', user.id);
+      // STEP 1 → Call backend
+      console.log(user?.id);
+      const authUrl = await connectYouTube(user?.id); // 🔥 FIXED
 
-      // STEP 1: Get OAuth URL from backend
-      const authUrl = await connectYouTube(user.id);
+      console.log('YouTube OAuth URL =>', authUrl);
 
       if (!authUrl) {
         Toast.show('Failed to get YouTube OAuth URL', { type: 'danger' });
-        setConnectingPlatform(null);
         return;
       }
 
-      console.log('🔗 OAuth URL:', authUrl);
+      Toast.show('Redirecting to YouTube authorization...', { type: 'info' });
 
-      // STEP 2: Open OAuth in browser
-      Toast.show('Opening YouTube authorization...', { type: 'info' });
+      // STEP 2 → Open Google OAuth in an in-app browser
+      const redirectUri = Linking.createURL('/'); // expo:// scheme
+      console.log('Redirect URI =>', redirectUri);
 
-      const redirectUri = Linking.createURL('/');
-      console.log('📍 Redirect URI:', redirectUri);
+      await WebBrowser.openAuthSessionAsync(authUrl, redirectUri); // 🔥 FIXED
 
-      const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
-
-      console.log('🔙 WebBrowser result:', result);
-
-      // STEP 3: Handle result
-      if (result.type === 'success') {
-        console.log('✅ OAuth completed successfully');
-
-        // The deep link handler will take care of showing success message
-        // and refreshing connections, but we'll also refresh here as backup
-        setTimeout(() => {
-          fetchSocialConnections();
-        }, 2000);
-      } else if (result.type === 'cancel') {
-        console.log('❌ User cancelled OAuth');
-        Toast.show('Authorization cancelled', { type: 'info' });
-      } else if (result.type === 'dismiss') {
-        console.log('⚠️ OAuth dismissed');
-        Toast.show('Authorization dismissed', { type: 'info' });
-      }
-    } catch (error: any) {
-      console.error('❌ OAuth Error:', error);
+      // STEP 3 → AFTER CALLBACK, refresh connection status
+      await fetchSocialConnections();
+    } catch (error) {
+      console.log('OAuth Error:', error);
       Toast.show(getErrorMessage(error), { type: 'warning' });
     } finally {
       setConnectingPlatform(null);
@@ -195,19 +139,13 @@ export default function ProfileScreen() {
           onPress: async () => {
             try {
               await disconnectSocialMedia(platform);
-
-              // Update local state immediately
               setSocialConnections((prev) => ({
                 ...prev,
                 [platform]: false,
               }));
-
-              Toast.show(`${capitalize(platform)} disconnected successfully`, {
+              Toast.show(`${platform} disconnected successfully`, {
                 type: 'success',
               });
-
-              // Refresh from server to confirm
-              await fetchSocialConnections();
             } catch (error: any) {
               Toast.show(getErrorMessage(error), {
                 type: 'warning',
@@ -296,19 +234,11 @@ export default function ProfileScreen() {
       {/* Header */}
       <View className="flex-row items-center justify-between bg-gray-100 px-5 pb-5 pt-16 dark:bg-[#252525]">
         <Text className="text-2xl font-bold text-black dark:text-white">Profile</Text>
-        <View className="flex-row gap-2">
-          {/* Refresh button for debugging */}
-          <TouchableOpacity
-            onPress={fetchSocialConnections}
-            className="h-10 w-10 items-center justify-center rounded-full bg-white dark:bg-[#1a1a1a]">
-            <MaterialIcons name="refresh" size={20} color="#2196F3" />
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => router.push('/edit-profile')}
-            className="h-10 w-10 items-center justify-center rounded-full bg-white dark:bg-[#1a1a1a]">
-            <MaterialIcons name="edit" size={20} color="#2196F3" />
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          onPress={() => router.push('/edit-profile')}
+          className="h-10 w-10 items-center justify-center rounded-full bg-white dark:bg-[#1a1a1a]">
+          <MaterialIcons name="edit" size={20} color="#2196F3" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
@@ -326,12 +256,11 @@ export default function ProfileScreen() {
           <Text className="mb-2 mt-2 text-2xl font-bold text-black dark:text-white">
             {capitalize(user?.first_name)} {capitalize(user?.last_name)}
           </Text>
-          {user?.address && (
+          {user && (
             <View className="mb-2 flex-row items-center gap-1.5">
               <MaterialIcons name="location-on" size={14} color={isDark ? '#888888' : '#666666'} />
               <Text className="text-sm text-gray-500 dark:text-[#888888]">
-                {user?.address.village_name}, {user?.address.block_name},{' '}
-                {user?.address.district_name}, {user?.address.state_name}
+                {user?.village_name}, {user?.block_name}, {user?.district_name}, {user?.state_name}
               </Text>
             </View>
           )}
@@ -342,35 +271,46 @@ export default function ProfileScreen() {
         <View className="mx-5 mb-5 flex-row rounded-xl border border-gray-200 bg-gray-50 p-5 dark:border-[#333333] dark:bg-[#252525]">
           {isLeader ? (
             <>
+              {/* Followers */}
               <View className="flex-1 items-center">
                 <Text className="mb-1 text-2xl font-bold text-[#2196F3]">
-                  {profileData?.followersCount || user?.followersCount || 0}
+                  {formatCount(profileStats?.followers_count)}
                 </Text>
                 <Text className="text-sm text-gray-500 dark:text-[#888888]">Followers</Text>
               </View>
 
               <View className="w-px bg-gray-200 dark:bg-[#333333]" />
 
+              {/* Following */}
               <View className="flex-1 items-center">
                 <Text className="mb-1 text-2xl font-bold text-[#2196F3]">
-                  {profileData?.followingCount || user?.followingCount || 0}
+                  {formatCount(profileStats?.following_count)}
                 </Text>
                 <Text className="text-sm text-gray-500 dark:text-[#888888]">Following</Text>
               </View>
 
               <View className="w-px bg-gray-200 dark:bg-[#333333]" />
 
+              {/* Streams */}
               <View className="flex-1 items-center">
                 <Text className="mb-1 text-2xl font-bold text-[#2196F3]">
-                  {profileData?.streamsCount || user?.streamsCount || 0}
+                  {formatCount(profileStats?.streams_count)}
                 </Text>
                 <Text className="text-sm text-gray-500 dark:text-[#888888]">Streams</Text>
+              </View>
+              <View className="w-px bg-gray-200 dark:bg-[#333333]" />
+
+              <View className="flex-1 items-center">
+                <Text className="mb-1 text-2xl font-bold text-[#2196F3]">
+                  {formatCount(profileStats?.posts_count)}
+                </Text>
+                <Text className="text-sm text-gray-500 dark:text-[#888888]">Posts</Text>
               </View>
             </>
           ) : (
             <View className="flex-1 items-center">
               <Text className="mb-1 text-2xl font-bold text-[#2196F3]">
-                {profileData?.followingCount || user?.followingCount || 0}
+                {profileStats?.following_count}
               </Text>
               <Text className="text-sm text-gray-500 dark:text-[#888888]">Following</Text>
             </View>
@@ -436,6 +376,15 @@ export default function ProfileScreen() {
               <MaterialIcons name="logout" size={20} color="#ff4444" />
             </View>
             <Text className="text-base text-[#ff4444]">Logout</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            className="mb-2 flex-row items-center rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-[#333333] dark:bg-[#252525]"
+            onPress={handleLogout}>
+            <View className="mr-3 h-10 w-10 items-center justify-center rounded-full bg-red-50 dark:bg-red-900/20">
+              <MaterialIcons name="logout" size={20} color="#ff4444" />
+            </View>
+            <Text className="text-base text-[#ff4444]">Logout from all Devices</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

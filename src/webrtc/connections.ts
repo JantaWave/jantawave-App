@@ -210,37 +210,45 @@ export class StreamConnection {
       consuming: false,
     });
 
+    console.log('createWebRtcTransport -> transportInfo:', transportInfo);
+
     this.producerTransport = this.device.createSendTransport(transportInfo);
 
-    // 4. Handle Transport Events (Connect & Produce)
     this.producerTransport.on(
       'connect',
       async ({ dtlsParameters }: any, callback: any, errback: any) => {
+        console.log('producerTransport.connect called, dtlsParameters:', dtlsParameters);
         try {
-          await this.request('connectTransport', {
+          const resp = await this.request('connectTransport', {
             transportId: this.producerTransport.id,
             dtlsParameters,
           });
+          console.log('connectTransport response:', resp);
           callback();
         } catch (error) {
+          console.error('connectTransport error:', error);
           errback(error);
         }
       }
     );
 
+    // 4. Handle Transport Events (Connect & Produce)
     this.producerTransport.on(
       'produce',
       async ({ kind, rtpParameters, appData }: any, callback: any, errback: any) => {
+        console.log('producerTransport.produce event -> kind:', kind, 'appData:', appData);
         try {
           const { id } = await this.request('produce', {
             transportId: this.producerTransport.id,
             kind,
             rtpParameters,
             appData,
-            sessionId: this.sessionId, // IMPORTANT: Link producer to session here
+            sessionId: this.sessionId,
           });
+          console.log('produce ack from server -> producerId:', id, 'kind:', kind);
           callback({ id });
         } catch (error) {
+          console.error('produce request failed', error);
           errback(error);
         }
       }
@@ -250,17 +258,33 @@ export class StreamConnection {
     const videoTrack = localStream.getVideoTracks()[0];
     const audioTrack = localStream.getAudioTracks()[0];
 
+    const producePromises: Promise<any>[] = [];
+
     if (videoTrack) {
-      this.videoProducer = await this.producerTransport.produce({ track: videoTrack });
+      const p = this.producerTransport.produce({ track: videoTrack });
+      this.videoProducer = await p;
+      console.log('videoProducer local created:', this.videoProducer?.id);
+      producePromises.push(Promise.resolve(this.videoProducer));
     }
     if (audioTrack) {
-      this.audioProducer = await this.producerTransport.produce({ track: audioTrack });
+      const p = this.producerTransport.produce({ track: audioTrack });
+      this.audioProducer = await p;
+      console.log('audioProducer local created:', this.audioProducer?.id);
+      producePromises.push(Promise.resolve(this.audioProducer));
     }
 
-    console.log('Mediasoup producers created. Notifying backend...');
+    try {
+      await Promise.all(producePromises);
+    } catch (e) {
+      console.warn('One or more producers failed to start', e);
+    }
+
+    console.log('Mediasoup producers created and acked. Notifying backend...');
 
     // 6. Call the API to Start FFmpeg (Now the backend will find the producers!)
-    // Note: We don't send SDP here anymore. The backend finds streams via sessionId.
+    // Slight safety delay in case of network race — remove if not needed.
+    await new Promise((r) => setTimeout(r, 250));
+
     await startLive(this.sessionId);
 
     return { streamId: this.sessionId };

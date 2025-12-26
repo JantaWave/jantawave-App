@@ -14,13 +14,42 @@ export const getUserProfile = async () => {
   return response.data;
 };
 
+export const updateUserProfile = async (userData) => {
+  const response = await axiosClient.patch('/api/v1/user/profile', userData);
+  return response.data;
+};
+
+export const getUserProfileStats = async () => {
+  const response = await axiosClient.get('/api/v1/user/profile/stats');
+  console.log('stats data', response.data);
+  return response.data.data;
+};
+
 // export const updateUserProfile = async (data: UpdateProfileRequest) => {
 //   const response = await axiosClient.put('/api/v1/user/update', data);
 //   return response.data;
 // };
-//
-export const getUserStreams = async () => {
-  const response = await axiosClient.get('/api/v1/streams/');
+
+export const getUserStreams = async (limit = 5, cursor = null) => {
+  const response = await axiosClient.get('/api/v1/streams/', {
+    params: {
+      limit,
+      cursor,
+    },
+  });
+
+  return response.data.data;
+};
+
+export const searchLeaders = async (query: String) => {
+  const response = await axiosClient.get('/api/v1/search/leaders', { params: { query: query } });
+  console.log(response.data.data);
+  return response.data.data;
+};
+
+export const getLeaderProfile = async (userId: String) => {
+  const response = await axiosClient.get(`/api/v1/user/${userId}/profile`);
+  console.log(response.data.data);
   return response.data.data;
 };
 //
