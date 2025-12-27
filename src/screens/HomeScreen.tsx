@@ -50,7 +50,7 @@ export default function Home() {
 
             {isStreamer && (
               <Text className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
-                {isLeaderMode() ? 'Leader Mode' : 'Audience Mode'}
+                {isLeaderMode() ? 'Host Mode' : 'Viewer Mode'}
               </Text>
             )}
           </View>
