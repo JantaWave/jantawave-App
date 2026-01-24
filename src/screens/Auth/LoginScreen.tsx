@@ -89,13 +89,14 @@ export default function LoginScreen() {
 
       const accessToken = response?.tokens?.accessToken;
       const refreshToken = response?.tokens?.refreshToken;
+      const sessionId = response?.session?.id;
       const user = response?.user;
 
       if (accessToken && refreshToken && user) {
         const formattedUser = { ...user, address: user.address || null };
 
         // Pass actual values
-        await authLogin(accessToken, refreshToken, formattedUser);
+        await authLogin(accessToken, refreshToken, formattedUser, sessionId);
 
         Toast.show('Logged in successfully!', { type: 'success', placement: 'top' });
         router.replace('/(tabs)');

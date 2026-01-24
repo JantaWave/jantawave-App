@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AUTH_KEYS, APP_KEYS } from '@/src/constants/storage';
 
 /* ===================== TYPES ===================== */
 
@@ -15,6 +16,7 @@ interface User {
   is_online?: boolean;
   dob?: string;
   village_id?: string;
+  address?: any;
 }
 
 interface AuthContextType {
@@ -22,23 +24,21 @@ interface AuthContextType {
   accessToken: string | null;
   isLoading: boolean;
   activeRole: 'leader' | 'user';
-  login: (accessToken: string, refreshToken: string, userData: User) => Promise<void>;
-  logout: () => Promise<void>;
+  login: (
+    accessToken: string,
+    refreshToken: string,
+    userData: User,
+    sessionId: string
+  ) => Promise<void>;
+  localLogout: () => Promise<void>;
   updateUser: (userData: Partial<User>) => Promise<void>;
   setActiveRole: (role: 'leader' | 'user') => Promise<void>;
   updateAccessToken: (token: string) => Promise<void>;
   isLeaderMode: () => boolean;
 }
 
-/* ===================== CONSTANTS ===================== */
-
-const ACCESS_KEY = 'access_token';
-const REFRESH_KEY = 'refresh_token';
-const USER_KEY = 'user_data';
-const ROLE_KEY = 'active_role';
-
-// 👇 1. ADD THIS GLOBAL BRIDGE
-// This allows Axios (outside React) to call these functions
+/* ===================== GLOBAL BRIDGE ===================== */
+// Allows Axios (outside React) to call these functions
 export const authActions = {
   logout: () => {},
   updateToken: (token: string) => {},
@@ -61,16 +61,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const initAuth = async () => {
       try {
         const [storedAccess, storedRefresh, storedUser, storedRole] = await Promise.all([
-          AsyncStorage.getItem(ACCESS_KEY),
-          AsyncStorage.getItem(REFRESH_KEY),
-          AsyncStorage.getItem(USER_KEY),
-          AsyncStorage.getItem(ROLE_KEY),
+          AsyncStorage.getItem(AUTH_KEYS.ACCESS_TOKEN),
+          AsyncStorage.getItem(AUTH_KEYS.REFRESH_TOKEN),
+          AsyncStorage.getItem(AUTH_KEYS.USER_DATA),
+          AsyncStorage.getItem(AUTH_KEYS.USER_ROLE),
+          // AUTH_KEYS.SESSION_ID will be read directly by axios interceptor when needed
         ]);
 
         if (storedAccess && storedRefresh && storedUser) {
           const parsedUser: User = JSON.parse(storedUser);
           setAccessToken(storedAccess);
           setUser(parsedUser);
+
+          // Restore role state
           if (parsedUser.role === 'leader' && storedRole === 'leader') {
             setActiveRoleState('leader');
           } else {
@@ -83,41 +86,70 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false);
       }
     };
+
     initAuth();
   }, []);
 
-  /* ---------- HELPER FUNCTIONS ---------- */
+  /* ---------- HELPERS ---------- */
+
   const updateAccessToken = async (newToken: string) => {
     setAccessToken(newToken);
-    await AsyncStorage.setItem(ACCESS_KEY, newToken);
+    await AsyncStorage.setItem(AUTH_KEYS.ACCESS_TOKEN, newToken);
   };
 
-  const logout = async () => {
-    await AsyncStorage.multiRemove([ACCESS_KEY, REFRESH_KEY, USER_KEY, ROLE_KEY]);
-    setUser(null);
-    setAccessToken(null);
-    setActiveRoleState('user');
+  const localLogout = async () => {
+    try {
+      await AsyncStorage.multiRemove([
+        AUTH_KEYS.ACCESS_TOKEN,
+        AUTH_KEYS.REFRESH_TOKEN,
+        AUTH_KEYS.USER_DATA,
+        AUTH_KEYS.USER_ROLE,
+        AUTH_KEYS.SESSION_ID, // ✅ important for server session revoke
+        APP_KEYS.SEARCH_HISTORY,
+        APP_KEYS.EXPO_PUSH_TOKENS, // ✅ make sure this key exists in storage constants
+      ]);
+
+      setUser(null);
+      setAccessToken(null);
+      setActiveRoleState('user');
+    } catch (error) {
+      console.error('Logout error:', error);
+      setUser(null);
+      setAccessToken(null);
+      setActiveRoleState('user');
+    }
   };
 
-  // 👇 2. CONNECT BRIDGE TO STATE
-  // Whenever the provider mounts, we link the global actions to the state functions
+  /* ---------- CONNECT BRIDGE FOR AXIOS ---------- */
   useEffect(() => {
-    authActions.logout = logout;
+    authActions.logout = localLogout;
     authActions.updateToken = updateAccessToken;
-  }, [logout]); // dependencies
+  }, []);
 
   /* ---------- LOGIN ---------- */
-  const login = async (newAccessToken: string, newRefreshToken: string, userData: User) => {
+  const login = async (
+    newAccessToken: string,
+    newRefreshToken: string,
+    userData: User,
+    sessionId: string
+  ) => {
     const defaultRole: 'leader' | 'user' = userData.role === 'leader' ? 'leader' : 'user';
-    await AsyncStorage.multiSet([
-      [ACCESS_KEY, newAccessToken],
-      [REFRESH_KEY, newRefreshToken],
-      [USER_KEY, JSON.stringify(userData)],
-      [ROLE_KEY, defaultRole],
-    ]);
-    setAccessToken(newAccessToken);
-    setUser(userData);
-    setActiveRoleState(defaultRole);
+
+    try {
+      await AsyncStorage.multiSet([
+        [AUTH_KEYS.ACCESS_TOKEN, newAccessToken],
+        [AUTH_KEYS.REFRESH_TOKEN, newRefreshToken],
+        [AUTH_KEYS.USER_DATA, JSON.stringify(userData)],
+        [AUTH_KEYS.SESSION_ID, sessionId],
+        [AUTH_KEYS.USER_ROLE, defaultRole],
+      ]);
+
+      setAccessToken(newAccessToken);
+      setUser(userData);
+      setActiveRoleState(defaultRole);
+    } catch (error) {
+      console.error('Login storage error:', error);
+    }
   };
 
   /* ---------- UPDATE USER ---------- */
@@ -125,19 +157,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user) return;
     const updatedUser = { ...user, ...userData };
     setUser(updatedUser);
-    await AsyncStorage.setItem(USER_KEY, JSON.stringify(updatedUser));
+    await AsyncStorage.setItem(AUTH_KEYS.USER_DATA, JSON.stringify(updatedUser));
   };
 
   /* ---------- ROLE SWITCHING ---------- */
   const setActiveRole = async (role: 'leader' | 'user') => {
     if (!user) return;
+
+    // Security check: simple users cannot become leaders locally
     if (user.role !== 'leader') {
       setActiveRoleState('user');
-      await AsyncStorage.setItem(ROLE_KEY, 'user');
+      await AsyncStorage.setItem(AUTH_KEYS.USER_ROLE, 'user');
       return;
     }
+
     setActiveRoleState(role);
-    await AsyncStorage.setItem(ROLE_KEY, role);
+    await AsyncStorage.setItem(AUTH_KEYS.USER_ROLE, role);
   };
 
   const isLeaderMode = () => activeRole === 'leader';
@@ -150,7 +185,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         activeRole,
         login,
-        logout,
+        localLogout,
         updateUser,
         setActiveRole,
         updateAccessToken,

@@ -25,6 +25,10 @@ export interface LoginRequest {
   mpin?: string;
 }
 
+export interface LogoutRequest {
+  expoPushToken?: string | null;
+}
+
 export const sendOTP = async (data: SendOTPRequest) => {
   const response = await axiosClient.post('/api/v1/send-otp', data);
   return response.data;
@@ -43,6 +47,14 @@ export const register = async (data: RegisterRequest) => {
 export const login = async (data: LoginRequest) => {
   const response = await axiosClient.post('/api/v1/login', data);
   return response.data.data;
+};
+
+export const logout = async (data: LogoutRequest = {}) => {
+  await axiosClient.post('/api/v1/logout', data);
+};
+
+export const logoutFromAllDevices = async () => {
+  await axiosClient.post('/api/v1/logout-from-all-devices');
 };
 
 export const refreshAccessToken = async () => {

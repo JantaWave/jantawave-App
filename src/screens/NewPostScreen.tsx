@@ -149,7 +149,6 @@ export default function NewPostScreen() {
     if (!title || !content) return Alert.alert('Missing Fields', 'Please add title and content');
     try {
       await createPost({
-        userId: user?.id,
         title,
         content,
         mediaUrl: media,

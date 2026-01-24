@@ -1,115 +1,173 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
-  Image,
   StatusBar,
   useColorScheme,
+  FlatList,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useToast } from 'react-native-toast-notifications';
+import { getErrorMessage } from '../utils/getErrorMessage';
+
+import {
+  getMyNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+} from '../api/notifications';
 
 export default function NotificationsScreen() {
-  const [activeTab, setActiveTab] = useState('all');
+  const Toast = useToast();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
 
-  const notifications = [
-    {
-      id: 1,
-      user: 'Alice',
-      avatar: 'https://i.pravatar.cc/150?img=1',
-      message: 'mentioned you in her stream: "Check out this amazing view! 🌅"',
-      time: '2 minutes ago',
-      unread: true,
-      hasStatus: true,
-    },
-    {
-      id: 2,
-      user: 'Bob',
-      avatar: 'https://i.pravatar.cc/150?img=2',
-      message: 'started a new stream. "Let\'s play some games! 🎮"',
-      time: '15 minutes ago',
-      unread: false,
-    },
-  ];
+  const [activeTab, setActiveTab] = useState<'all' | 'unread'>('all');
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const filtered = notifications.filter((n) => (activeTab === 'unread' ? n.unread : n));
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  const fetchNotifications = async () => {
+    try {
+      setLoading(true);
+      const data = await getMyNotifications({ limit: 50, offset: 0 });
+      setNotifications(data.notifications);
+      setUnreadCount(data.unreadCount);
+    } catch (err: any) {
+      Toast.show(getErrorMessage(err), { type: 'warning' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+  }, []);
+
+  const onRefresh = async () => {
+    try {
+      setRefreshing(true);
+      await fetchNotifications();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const filteredData = notifications.filter((n) => (activeTab === 'unread' ? !n.is_read : true));
+
+  const NotificationItem = ({ item }: { item: any }) => (
+    <TouchableOpacity
+      className="mb-3 flex-row items-start gap-3 rounded-xl border border-border-light bg-surface-light p-4 dark:border-border-dark dark:bg-surface-dark"
+      activeOpacity={0.7}
+      onPress={async () => {
+        // ✅ mark read
+        if (!item.is_read) {
+          await markNotificationRead(item.id);
+          await fetchNotifications();
+        }
+
+        // ✅ you can navigate based on item.data.screen
+        // if (item.data?.screen) router.push(item.data.screen);
+      }}>
+      <View className="flex-1">
+        <Text className="text-[14px] font-bold text-text-primary-light dark:text-text-primary-dark">
+          {item.title}
+        </Text>
+        <Text className="mt-1 text-[13px] text-text-secondary-light dark:text-text-secondary-dark">
+          {item.body}
+        </Text>
+      </View>
+
+      {!item.is_read && <View className="mt-2 h-2.5 w-2.5 rounded-full bg-primary" />}
+    </TouchableOpacity>
+  );
 
   return (
-    <SafeAreaView className={`flex-1 ${isDark ? 'bg-[#101c22]' : 'bg-[#f6f7f8]'}`}>
+    <View className="flex-1 bg-background-light dark:bg-background-dark">
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
-      {/* Header */}
-      <View className="flex-row items-center justify-between border-b border-gray-300 px-5 py-4 dark:border-gray-700">
+      <View
+        className="flex-row items-center justify-between border-b border-border-light bg-background-light px-5 pb-4 dark:border-border-dark dark:bg-background-dark"
+        style={{ paddingTop: Math.max(insets.top, 20) + 10 }}>
         <TouchableOpacity onPress={() => router.back()}>
-          <MaterialIcons name="close" size={28} color={isDark ? '#fff' : '#1f2937'} />
+          <MaterialIcons name="close" size={26} color={isDark ? '#fff' : '#0f172a'} />
         </TouchableOpacity>
 
-        <Text className={`text-lg font-bold ${isDark ? 'text-white' : 'text-black'}`}>
+        <Text className="text-lg font-bold text-text-primary-light dark:text-text-primary-dark">
           Notifications
         </Text>
 
-        <View className="w-6" />
+        <TouchableOpacity
+          onPress={async () => {
+            await markAllNotificationsRead();
+            await fetchNotifications();
+            Toast.show('All marked as read', { type: 'success' });
+          }}>
+          <Text className="text-sm font-semibold text-primary">Read All</Text>
+        </TouchableOpacity>
       </View>
 
       {/* Tabs */}
-      <View className="flex-row gap-2 p-4">
+      <View className="flex-row gap-2 px-5 py-4">
         {['all', 'unread'].map((tab) => (
           <TouchableOpacity
             key={tab}
-            onPress={() => setActiveTab(tab)}
-            className={`flex-1 rounded-full border px-4 py-2 ${
+            onPress={() => setActiveTab(tab as any)}
+            className={`flex-1 rounded-xl border py-2.5 ${
               activeTab === tab
-                ? 'border-[#13a4ec] bg-[#13a4ec]/10'
-                : isDark
-                  ? 'border-gray-700 bg-[#1a2831]'
-                  : 'border-gray-300 bg-white'
+                ? 'border-primary bg-primary'
+                : 'border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark'
             }`}>
             <Text
-              className={`text-center text-sm font-medium ${
-                activeTab === tab ? 'text-[#13a4ec]' : isDark ? 'text-gray-300' : 'text-gray-700'
+              className={`text-center text-sm font-semibold ${
+                activeTab === tab
+                  ? 'text-white'
+                  : 'text-text-secondary-light dark:text-text-secondary-dark'
               }`}>
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab === 'unread' ? `Unread (${unreadCount})` : 'All'}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* Notifications List */}
-      <ScrollView
-        className="flex-1 px-4"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 100 }}>
-        {filtered.map((n) => (
-          <TouchableOpacity
-            key={n.id}
-            className={`mb-3 flex-row items-start gap-3 rounded-lg p-3 ${
-              isDark ? 'bg-[#1a2831]' : 'bg-white'
-            }`}
-            activeOpacity={0.8}>
-            <View className="relative">
-              <Image source={{ uri: n.avatar }} className="h-12 w-12 rounded-full" />
-              {n.hasStatus && (
-                <View className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#1a2831] bg-red-500" />
-              )}
-            </View>
-
-            <View className="flex-1">
-              <Text className={`text-sm ${isDark ? 'text-white' : 'text-gray-800'}`}>
-                <Text className="font-bold">{n.user}</Text> {n.message}
+      {/* List */}
+      {loading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" />
+        </View>
+      ) : (
+        <FlatList
+          data={filteredData}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <NotificationItem item={item} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{
+            paddingHorizontal: 20,
+            paddingBottom: Math.max(insets.bottom, 20) + 20,
+          }}
+          ListEmptyComponent={() => (
+            <View className="mt-20 items-center justify-center">
+              <MaterialIcons
+                name="notifications-none"
+                size={40}
+                color={isDark ? '#4b5563' : '#9ca3af'}
+              />
+              <Text className="mt-3 text-lg font-medium text-text-secondary-light dark:text-text-secondary-dark">
+                No {activeTab === 'unread' ? 'unread ' : ''}notifications
               </Text>
-              <Text className="mt-1 text-xs text-gray-400">{n.time}</Text>
             </View>
-
-            {n.unread && <View className="mt-2 h-2 w-2 rounded-full bg-[#13a4ec]" />}
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-    </SafeAreaView>
+          )}
+        />
+      )}
+    </View>
   );
 }

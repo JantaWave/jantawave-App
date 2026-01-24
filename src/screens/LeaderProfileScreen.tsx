@@ -43,6 +43,15 @@ export default function LeaderProfileScreen() {
   const insets = useSafeAreaInsets();
   const { isDark } = useAppTheme();
 
+  // --- Theme Colors for non-Tailwind props (Icons/Spinners) ---
+  // Mapped from your tailwind.config.js
+  const colors = {
+    textPrimary: isDark ? '#f8fafc' : '#0f172a',
+    textSecondary: isDark ? '#94a3b8' : '#64748b',
+    primary: '#2196F3',
+    white: '#ffffff',
+  };
+
   /* ---------------- STATE ---------------- */
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,7 +94,6 @@ export default function LeaderProfileScreen() {
 
       try {
         setContentLoading(true);
-
         const currentCursor = isLoadMore ? postCursor : null;
         const response = await getUserPosts(profile.id, PAGE_LIMIT, currentCursor);
         const newPosts = response?.posts || [];
@@ -95,7 +103,7 @@ export default function LeaderProfileScreen() {
         setPostCursor(nextCursor);
         setPostsHasMore(!!nextCursor);
       } catch (error) {
-        console.error(error); // Log the actual error
+        console.error(error);
         Alert.alert('Error', 'Failed to load posts');
       } finally {
         setContentLoading(false);
@@ -103,6 +111,7 @@ export default function LeaderProfileScreen() {
     },
     [profile, postCursor, contentLoading]
   );
+
   /* ---------------- FETCH STREAMS ---------------- */
   const fetchStreams = useCallback(
     async (isLoadMore = false) => {
@@ -125,6 +134,7 @@ export default function LeaderProfileScreen() {
     },
     [profile, streamCursor, contentLoading]
   );
+
   /* ---------------- TAB CHANGE ---------------- */
   useEffect(() => {
     if (!profile || contentLoading) return;
@@ -176,12 +186,12 @@ export default function LeaderProfileScreen() {
 
   /* ---------------- GRID ITEM ---------------- */
   const GridItem = ({ thumbnail }: { thumbnail?: string }) => (
-    <View className="h-32 w-1/3 border border-black/5 dark:border-white/5">
+    <View className="h-32 w-1/3 border border-border-light dark:border-border-dark">
       {thumbnail ? (
         <Image source={{ uri: thumbnail }} className="h-full w-full" />
       ) : (
-        <View className="flex-1 items-center justify-center bg-gray-200 dark:bg-gray-800">
-          <Feather name="video" size={20} color="#999" />
+        <View className="flex-1 items-center justify-center bg-surfaceHighlight-light dark:bg-surfaceHighlight-dark">
+          <Feather name="video" size={20} color={colors.textSecondary} />
         </View>
       )}
     </View>
@@ -189,8 +199,8 @@ export default function LeaderProfileScreen() {
 
   if (loading) {
     return (
-      <View className="flex-1 items-center justify-center bg-white dark:bg-black">
-        <ActivityIndicator size="large" />
+      <View className="flex-1 items-center justify-center bg-background-light dark:bg-background-dark">
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -202,7 +212,7 @@ export default function LeaderProfileScreen() {
 
   /* ---------------- RENDER ---------------- */
   return (
-    <View className="flex-1 bg-white dark:bg-black">
+    <View className="flex-1 bg-background-light dark:bg-background-dark">
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
       <FlatList
@@ -222,9 +232,9 @@ export default function LeaderProfileScreen() {
             {/* HEADER */}
             <View className="flex-row items-center px-4" style={{ paddingTop: insets.top + 8 }}>
               <TouchableOpacity onPress={() => router.back()}>
-                <Feather name="arrow-left" size={24} color={isDark ? '#fff' : '#000'} />
+                <Feather name="arrow-left" size={24} color={colors.textPrimary} />
               </TouchableOpacity>
-              <Text className="ml-4 text-lg font-bold text-black dark:text-white">
+              <Text className="ml-4 text-lg font-bold text-text-primary-light dark:text-text-primary-dark">
                 {capitalize(profile.first_name)}
               </Text>
             </View>
@@ -234,7 +244,7 @@ export default function LeaderProfileScreen() {
               {profile.avatar_url ? (
                 <Image source={{ uri: profile.avatar_url }} className="h-24 w-24 rounded-full" />
               ) : (
-                <View className="h-24 w-24 items-center justify-center rounded-full bg-blue-500">
+                <View className="h-24 w-24 items-center justify-center rounded-full bg-primary">
                   <Text className="text-3xl font-black text-white">
                     {getInitials(profile.first_name, profile.last_name)}
                   </Text>
@@ -248,10 +258,12 @@ export default function LeaderProfileScreen() {
                   { label: 'Following', value: profile.following_count },
                 ].map((item) => (
                   <View key={item.label} className="items-center">
-                    <Text className="text-lg font-bold text-black dark:text-white">
+                    <Text className="text-lg font-bold text-text-primary-light dark:text-text-primary-dark">
                       {item.value}
                     </Text>
-                    <Text className="text-xs text-gray-500">{item.label}</Text>
+                    <Text className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+                      {item.label}
+                    </Text>
                   </View>
                 ))}
               </View>
@@ -263,14 +275,21 @@ export default function LeaderProfileScreen() {
                 onPress={handleToggleFollow}
                 disabled={followLoading}
                 className={`h-9 items-center justify-center rounded-md ${
-                  profile.is_following ? 'bg-gray-200 dark:bg-gray-700' : 'bg-blue-500'
+                  profile.is_following
+                    ? 'bg-surfaceHighlight-light dark:bg-surfaceHighlight-dark'
+                    : 'bg-primary'
                 }`}>
                 {followLoading ? (
-                  <ActivityIndicator size="small" color={profile.is_following ? '#000' : '#fff'} />
+                  <ActivityIndicator
+                    size="small"
+                    color={profile.is_following ? colors.textPrimary : colors.white}
+                  />
                 ) : (
                   <Text
                     className={`font-semibold ${
-                      profile.is_following ? 'text-black dark:text-white' : 'text-white'
+                      profile.is_following
+                        ? 'text-text-primary-light dark:text-text-primary-dark'
+                        : 'text-white'
                     }`}>
                     {profile.is_following ? 'Following' : 'Follow'}
                   </Text>
@@ -279,18 +298,20 @@ export default function LeaderProfileScreen() {
             </View>
 
             {/* TABS */}
-            <View className="mt-6 flex-row border-t border-gray-200 dark:border-gray-800">
+            <View className="mt-6 flex-row border-t border-border-light dark:border-border-dark">
               {(['posts', 'streams'] as TabType[]).map((tab) => (
                 <TouchableOpacity
                   key={tab}
                   onPress={() => setActiveTab(tab)}
                   className={`flex-1 items-center py-3 ${
-                    activeTab === tab ? 'border-b-2 border-black dark:border-white' : ''
+                    activeTab === tab
+                      ? 'border-b-2 border-text-primary-light dark:border-text-primary-dark'
+                      : ''
                   }`}>
                   <Feather
                     name={tab === 'posts' ? 'grid' : 'video'}
                     size={20}
-                    color={isDark ? '#fff' : '#000'}
+                    color={colors.textPrimary}
                   />
                 </TouchableOpacity>
               ))}
@@ -298,13 +319,21 @@ export default function LeaderProfileScreen() {
           </>
         }
         ListFooterComponent={
-          contentLoading && hasMore ? <ActivityIndicator className="my-4" size="small" /> : null
+          contentLoading && hasMore ? (
+            <ActivityIndicator className="my-4" size="small" color={colors.primary} />
+          ) : null
         }
         ListEmptyComponent={
           !contentLoading ? (
             <View className="items-center justify-center py-20">
-              <Feather name={activeTab === 'posts' ? 'image' : 'video'} size={48} color="#999" />
-              <Text className="mt-4 text-gray-500">No {activeTab} yet</Text>
+              <Feather
+                name={activeTab === 'posts' ? 'image' : 'video'}
+                size={48}
+                color={colors.textSecondary}
+              />
+              <Text className="mt-4 text-text-secondary-light dark:text-text-secondary-dark">
+                No {activeTab} yet
+              </Text>
             </View>
           ) : null
         }

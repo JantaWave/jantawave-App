@@ -14,6 +14,7 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
@@ -75,10 +76,12 @@ export default function CreateStreamScreen() {
     try {
       setUploading(true);
       const fileName = uri.split('/').pop() || 'image.jpg';
-      const fileType = fileName.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      const fileType = 'image/jpeg'; // Always use JPEG after compression
       const { uploadUrl, fileUrl } = await getPresignedUrl(fileName, fileType, 'thumbnail');
+
       const response = await fetch(uri);
       const blob = await response.blob();
+
       const uploadResponse = await fetch(uploadUrl, {
         method: 'PUT',
         headers: { 'Content-Type': fileType },
@@ -99,16 +102,75 @@ export default function CreateStreamScreen() {
   };
 
   const handlePickThumbnail = async () => {
-    const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.6,
-    });
-    if (!res.canceled && res.assets?.[0]) {
-      await uploadToR2(res.assets[0].uri);
+    try {
+      // Request permissions first
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Please grant photo library access to upload thumbnails.'
+        );
+        return;
+      }
+
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [16, 9], // Landscape mode aspect ratio
+        quality: 1,
+        // iOS specific options for better editing UI
+        ...(Platform.OS === 'ios' && {
+          presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
+        }),
+      });
+
+      if (!res.canceled && res.assets?.[0]) {
+        setUploading(true);
+        const asset = res.assets[0];
+
+        // Get image dimensions
+        const { width, height } = asset;
+
+        // Calculate landscape dimensions (16:9 aspect ratio)
+        let targetWidth = 1920;
+        let targetHeight = 1080;
+
+        // If image is smaller, maintain aspect ratio but don't upscale
+        if (width < targetWidth || height < targetHeight) {
+          const aspectRatio = 16 / 9;
+          if (width / height > aspectRatio) {
+            targetWidth = width;
+            targetHeight = Math.round(width / aspectRatio);
+          } else {
+            targetHeight = height;
+            targetWidth = Math.round(height * aspectRatio);
+          }
+        }
+
+        // Compress and resize image
+        const manipulatedImage = await ImageManipulator.manipulateAsync(
+          asset.uri,
+          [
+            {
+              resize: {
+                width: targetWidth,
+                height: targetHeight,
+              },
+            },
+          ],
+          {
+            compress: 0.7,
+            format: ImageManipulator.SaveFormat.JPEG,
+          }
+        );
+
+        await uploadToR2(manipulatedImage.uri);
+      }
+    } catch (error: any) {
+      Alert.alert('Error', 'Failed to process image. ' + error.message);
+      setUploading(false);
     }
   };
-
   const toggleVillage = (id: string) => {
     setVillages((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
   };
@@ -228,46 +290,64 @@ export default function CreateStreamScreen() {
           {/* 1. Thumbnail Section */}
           <View className="mb-6">
             <Text className="mb-3 text-sm font-semibold uppercase tracking-wider text-text-secondary-light dark:text-text-secondary-dark">
-              Thumbnail
+              Thumbnail (Landscape)
             </Text>
             <TouchableOpacity
               onPress={handlePickThumbnail}
               disabled={uploading}
-              className="relative h-48 w-full items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
+              className="relative aspect-video w-full overflow-hidden rounded-2xl border-2 border-dashed border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
               {uploading ? (
-                <View className="items-center">
+                <View className="flex-1 items-center justify-center">
                   <ActivityIndicator size="large" color="#2196F3" />
                   <Text className="mt-3 font-medium text-text-secondary-light dark:text-text-secondary-dark">
-                    Uploading...
+                    Processing...
                   </Text>
                 </View>
               ) : thumbnail ? (
-                <>
+                <View className="relative h-full w-full">
+                  {/* Image Container - Separate from buttons */}
                   <ImageBackground
                     source={{ uri: thumbnail }}
-                    className="absolute inset-0"
+                    className="h-full w-full"
                     resizeMode="cover"
                   />
-                  <View className="absolute inset-0 items-center justify-center bg-black/30">
-                    <Feather name="edit-2" size={24} color="#fff" />
+
+                  {/* Overlay with Edit Button - Positioned away from crop controls */}
+                  <View className="absolute inset-0 items-center justify-center bg-black/20">
+                    <View className="items-center justify-center rounded-full bg-black/60 p-4">
+                      <Feather name="edit-2" size={28} color="#fff" />
+                      <Text className="mt-2 text-xs font-semibold text-white">Tap to Change</Text>
+                    </View>
                   </View>
-                </>
+                </View>
               ) : (
-                <View className="items-center opacity-70">
+                <View className="flex-1 items-center justify-center opacity-70">
                   <View className="mb-3 h-14 w-14 items-center justify-center rounded-full bg-surfaceHighlight-light dark:bg-surfaceHighlight-dark">
                     <Feather name="image" size={24} color={isDark ? '#94a3b8' : '#64748b'} />
                   </View>
                   <Text className="text-base font-semibold text-text-primary-light dark:text-text-primary-dark">
-                    Upload Cover Image
+                    Upload Landscape Cover
                   </Text>
                   <Text className="mt-1 text-xs text-text-secondary-light dark:text-text-secondary-dark">
-                    PNG, JPG up to 5MB
+                    16:9 ratio • JPG up to 5MB
+                  </Text>
+                  <Text className="mt-1 text-[10px] text-text-secondary-light dark:text-text-secondary-dark">
+                    Image will be compressed automatically
                   </Text>
                 </View>
               )}
             </TouchableOpacity>
-          </View>
 
+            {/* Info Box */}
+            {thumbnail && (
+              <View className="mt-2 flex-row items-center rounded-lg bg-blue-50 p-2 dark:bg-blue-900/20">
+                <Feather name="info" size={14} color="#2196F3" />
+                <Text className="ml-2 text-xs text-blue-700 dark:text-blue-300">
+                  Optimized for landscape streaming (1920x1080)
+                </Text>
+              </View>
+            )}
+          </View>
           {/* 2. Stream Details Card */}
           <View className="mb-6 rounded-2xl border border-border-light bg-surface-light p-4 shadow-sm shadow-gray-200 dark:border-border-dark dark:bg-surface-dark dark:shadow-none">
             {/* Title */}
@@ -300,7 +380,6 @@ export default function CreateStreamScreen() {
               />
             </View>
           </View>
-
           {/* 3. Schedule Section */}
           <View className="mb-6 rounded-2xl border border-border-light bg-surface-light p-4 dark:border-border-dark dark:bg-surface-dark">
             <View className="mb-4 flex-row items-center justify-between">
@@ -359,7 +438,6 @@ export default function CreateStreamScreen() {
               </View>
             )}
           </View>
-
           {/* 4. Villages Selector */}
           <View className="mb-6">
             <Text className="mb-2 text-sm font-semibold uppercase tracking-wider text-text-secondary-light dark:text-text-secondary-dark">
@@ -460,7 +538,6 @@ export default function CreateStreamScreen() {
               )}
             </View>
           </View>
-
           {/* 5. Platforms & Notification */}
           <View className="mb-6">
             <Text className="mb-2 text-sm font-semibold uppercase tracking-wider text-text-secondary-light dark:text-text-secondary-dark">

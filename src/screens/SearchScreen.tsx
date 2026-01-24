@@ -8,14 +8,17 @@ import {
   FlatList,
   ActivityIndicator,
   Keyboard,
+  StatusBar,
 } from 'react-native';
 import { MaterialIcons, Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import debounce from 'lodash/debounce';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '../context/ThemeContext';
 import { searchLeaders } from '../api/user';
 import { getInitials } from '../utils/getInitials';
+import { APP_KEYS } from '../constants/storage';
 
 // --- TYPES ---
 interface Leader {
@@ -28,11 +31,19 @@ interface Leader {
   block_name?: string;
 }
 
-const STORAGE_KEY = '@recent_leaders_search';
-
 export default function DiscoverLeadersScreen() {
   const router = useRouter();
-  const { colors, isDark } = useAppTheme();
+  const { isDark } = useAppTheme();
+  const insets = useSafeAreaInsets();
+
+  // --- THEME CONSTANTS FOR PROPS ---
+  const colors = {
+    primary: '#2196F3',
+    textSecondary: isDark ? '#94a3b8' : '#64748b',
+    textPrimary: isDark ? '#f8fafc' : '#0f172a',
+    placeholder: isDark ? '#94a3b8' : '#94a3b8',
+    surfaceHighlight: isDark ? '#262626' : '#f1f5f9',
+  };
 
   // --- STATE ---
   const [searchQuery, setSearchQuery] = useState('');
@@ -47,7 +58,7 @@ export default function DiscoverLeadersScreen() {
 
   const loadRecentHistory = async () => {
     try {
-      const jsonValue = await AsyncStorage.getItem(STORAGE_KEY);
+      const jsonValue = await AsyncStorage.getItem(APP_KEYS.SEARCH_HISTORY);
       if (jsonValue != null) {
         setRecentLeaders(JSON.parse(jsonValue));
       }
@@ -62,7 +73,7 @@ export default function DiscoverLeadersScreen() {
       const filtered = recentLeaders.filter((item) => item.id !== leader.id);
       const updated = [leader, ...filtered].slice(0, 5); // Keep max 5
       setRecentLeaders(updated);
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      await AsyncStorage.setItem(APP_KEYS.SEARCH_HISTORY, JSON.stringify(updated));
     } catch (e) {
       console.error('Failed to save history', e);
     }
@@ -70,7 +81,7 @@ export default function DiscoverLeadersScreen() {
 
   const clearHistory = async () => {
     setRecentLeaders([]);
-    await AsyncStorage.removeItem(STORAGE_KEY);
+    await AsyncStorage.removeItem(APP_KEYS.SEARCH_HISTORY);
   };
 
   // --- API SEARCH ---
@@ -84,7 +95,6 @@ export default function DiscoverLeadersScreen() {
     try {
       setLoading(true);
       const response = await searchLeaders(text);
-      // Ensure we treat the response correctly (handle if it returns { data: [...] } or just [...])
       const data = response.data || response;
       setSearchResults(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -110,8 +120,6 @@ export default function DiscoverLeadersScreen() {
   const handleSelectLeader = (leader: Leader) => {
     Keyboard.dismiss();
     addToRecent(leader);
-
-    // Navigate to the dynamic route [id].tsx
     router.push({
       pathname: '/leader-profile/[id]',
       params: { id: leader.id },
@@ -123,12 +131,16 @@ export default function DiscoverLeadersScreen() {
     <TouchableOpacity
       onPress={() => handleSelectLeader(item)}
       activeOpacity={0.7}
-      className={`mb-3 flex-row items-center justify-between rounded-xl border-border-light bg-background-light p-3 dark:border-border-dark dark:bg-background-dark`}>
+      // Using surface colors for cards with a subtle border
+      className="mb-3 flex-row items-center justify-between rounded-xl border border-border-light bg-surface-light p-3 dark:border-border-dark dark:bg-surface-dark">
       <View className="flex-row items-center gap-3">
         {item.avatar_url ? (
-          <Image source={{ uri: item.avatar_url }} className="h-12 w-12 rounded-full bg-gray-300" />
+          <Image
+            source={{ uri: item.avatar_url }}
+            className="h-12 w-12 rounded-full bg-surfaceHighlight-light dark:bg-surfaceHighlight-dark"
+          />
         ) : (
-          <View className="h-12 w-12 items-center justify-center rounded-full bg-blue-500">
+          <View className="h-12 w-12 items-center justify-center rounded-full bg-primary">
             <Text className="text-xl font-black text-white">
               {getInitials(item?.first_name, item?.last_name)}
             </Text>
@@ -136,33 +148,36 @@ export default function DiscoverLeadersScreen() {
         )}
 
         <View>
-          <Text className={`text-base font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+          <Text className="text-base font-bold text-text-primary-light dark:text-text-primary-dark">
             {item.first_name} {item.last_name}
           </Text>
           <View className="flex-row items-center gap-1">
             {item.village_name && (
-              <Text className={`text-xs ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+              <Text className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
                 {item.village_name} {item.block_name ? `• ${item.block_name}` : ''}
               </Text>
             )}
-            {isHistory && <Feather name="clock" size={10} color={isDark ? '#9ca3af' : '#6b7280'} />}
+            {isHistory && <Feather name="clock" size={10} color={colors.textSecondary} />}
           </View>
         </View>
       </View>
-      <Feather name="chevron-right" size={20} color={isDark ? '#555' : '#ccc'} />
+      <Feather name="chevron-right" size={20} color={colors.textSecondary} />
     </TouchableOpacity>
   );
 
   return (
-    <View className="flex-1 bg-background-light dark:border-border-dark">
+    <View className="flex-1 bg-background-light dark:bg-background-dark">
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+
       {/* --- HEADER --- */}
       <View
-        className={`flex-row items-center gap-3 px-4 pb-4 pt-14 ${isDark ? 'bg-[#1a1a1a]' : 'bg-white shadow-sm'}`}>
+        className="flex-row items-center gap-3 border-b border-border-light bg-background-light px-4 pb-4 dark:border-border-dark dark:bg-background-dark"
+        style={{ paddingTop: Math.max(insets.top, 20) + 10 }}>
         {/* 1. Back Button */}
         <TouchableOpacity
           onPress={() => router.back()}
-          className={`-ml-2 rounded-full p-2 ${isDark ? 'active:bg-gray-800' : 'active:bg-gray-100'}`}>
-          <Feather name="arrow-left" size={24} color={isDark ? '#fff' : '#000'} />
+          className="-ml-2 rounded-full p-2 active:bg-surfaceHighlight-light dark:active:bg-surfaceHighlight-dark">
+          <Feather name="arrow-left" size={24} color={colors.textPrimary} />
         </TouchableOpacity>
 
         {/* 2. Search Input Container */}
@@ -170,26 +185,25 @@ export default function DiscoverLeadersScreen() {
           <MaterialIcons
             name="search"
             size={22}
-            color="#9ca3af"
+            color={colors.textSecondary}
             className="absolute left-3 top-3 z-10"
           />
           <TextInput
             placeholder="Search leaders..."
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.placeholder}
             value={searchQuery}
             onChangeText={handleSearchChange}
-            className={`rounded-xl py-3 pl-10 pr-10 text-base ${
-              isDark ? 'bg-[#252525] text-white' : 'bg-gray-100 text-gray-900'
-            }`}
+            // Using surface colors for input background
+            className="rounded-xl bg-surface-light py-3 pl-10 pr-10 text-base text-text-primary-light dark:bg-surface-dark dark:text-text-primary-dark"
             autoCapitalize="none"
             autoCorrect={false}
-            autoFocus={true} // Focus automatically for better UX
+            autoFocus={true}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity
               onPress={() => handleSearchChange('')}
               className="absolute right-3 top-3 z-20">
-              <Feather name="x" size={18} color="#9ca3af" />
+              <Feather name="x" size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           )}
         </View>
@@ -201,8 +215,8 @@ export default function DiscoverLeadersScreen() {
           <>
             {loading ? (
               <View className="mt-10 items-center">
-                <ActivityIndicator size="large" color="#2196F3" />
-                <Text className={`mt-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text className="mt-4 text-text-secondary-light dark:text-text-secondary-dark">
                   Searching JantaWave...
                 </Text>
               </View>
@@ -212,13 +226,13 @@ export default function DiscoverLeadersScreen() {
                 keyExtractor={(item) => item.id}
                 showsVerticalScrollIndicator={false}
                 renderItem={({ item }) => renderLeaderItem({ item })}
+                contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) }}
                 ListEmptyComponent={
                   <View className="mt-10 items-center">
-                    <Text
-                      className={`text-lg font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    <Text className="text-lg font-medium text-text-primary-light dark:text-text-primary-dark">
                       No leaders found
                     </Text>
-                    <Text className={`text-sm ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                    <Text className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
                       Try searching for a different village or name.
                     </Text>
                   </View>
@@ -231,12 +245,11 @@ export default function DiscoverLeadersScreen() {
           <>
             {recentLeaders.length > 0 && (
               <View className="mb-3 flex-row items-center justify-between">
-                <Text
-                  className={`text-sm font-bold uppercase tracking-wider ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                <Text className="text-sm font-bold uppercase tracking-wider text-text-secondary-light dark:text-text-secondary-dark">
                   Recent Searches
                 </Text>
                 <TouchableOpacity onPress={clearHistory}>
-                  <Text className="text-xs font-medium text-red-500">Clear All</Text>
+                  <Text className="text-xs font-medium text-danger">Clear All</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -246,11 +259,11 @@ export default function DiscoverLeadersScreen() {
               keyExtractor={(item) => item.id}
               showsVerticalScrollIndicator={false}
               renderItem={({ item }) => renderLeaderItem({ item, isHistory: true })}
+              contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) }}
               ListEmptyComponent={
                 <View className="mt-20 items-center opacity-60">
-                  <Feather name="users" size={48} color={isDark ? '#444' : '#ccc'} />
-                  <Text
-                    className={`mt-4 text-center font-medium ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                  <Feather name="users" size={48} color={colors.textSecondary} />
+                  <Text className="mt-4 text-center font-medium text-text-secondary-light dark:text-text-secondary-dark">
                     Search for leaders in your block{'\n'}to see their updates.
                   </Text>
                 </View>

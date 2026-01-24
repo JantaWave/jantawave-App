@@ -28,11 +28,14 @@ import {
 import * as WebBrowser from 'expo-web-browser';
 import * as Linking from 'expo-linking';
 import { formatCount } from '../utils/formatters';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { APP_KEYS } from '../constants/storage';
+import { logout, logoutFromAllDevices } from '../api/auth';
 
 export default function ProfileScreen() {
   const Toast = useToast();
   const router = useRouter();
-  const { user, logout, isLeaderMode } = useAuth();
+  const { user, localLogout, isLeaderMode } = useAuth();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const [loading, setLoading] = useState(false);
@@ -159,16 +162,56 @@ export default function ProfileScreen() {
 
   const handleLogout = async () => {
     try {
-      await logout();
-      Toast.show('See you soon!', {
-        type: 'success',
-      });
+      const expoPushToken = await AsyncStorage.getItem(APP_KEYS.EXPO_PUSH_TOKENS);
+      // if you store single token use APP_KEYS.EXPO_PUSH_TOKEN
+
+      // ✅ backend logout (revokes session + deletes push token)
+      await logout({ expoPushToken });
+
+      // ✅ local logout (clear AsyncStorage + reset state)
+      await localLogout();
+
+      Toast.show('See you soon!', { type: 'success' });
       router.replace('/auth/login');
-    } catch (error) {
-      Toast.show('Failed to logout', {
-        type: 'warning',
-      });
+    } catch (error: any) {
+      Toast.show(getErrorMessage(error), { type: 'warning' });
+
+      // ✅ still logout locally if server fails
+      await localLogout();
+      router.replace('/auth/login');
     }
+  };
+
+  const handleLogoutFromAllDevices = async () => {
+    Alert.alert(
+      'Logout from all devices',
+      'This will logout your account from all devices. Continue?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // ✅ backend logout all (revokes all sessions + deletes all push tokens)
+              await logoutFromAllDevices();
+
+              // ✅ local logout
+              await localLogout();
+
+              Toast.show('Logged out from all devices!', { type: 'success' });
+              router.replace('/auth/login');
+            } catch (error: any) {
+              Toast.show(getErrorMessage(error), { type: 'warning' });
+
+              // ✅ still logout locally if server fails
+              await localLogout();
+              router.replace('/auth/login');
+            }
+          },
+        },
+      ]
+    );
   };
 
   const SocialPlatformCard = ({
@@ -400,7 +443,7 @@ export default function ProfileScreen() {
 
           <TouchableOpacity
             className="mb-2 flex-row items-center rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-[#333333] dark:bg-[#252525]"
-            onPress={handleLogout}>
+            onPress={handleLogoutFromAllDevices}>
             <View className="mr-3 h-10 w-10 items-center justify-center rounded-full bg-red-50 dark:bg-red-900/20">
               <MaterialIcons name="logout" size={20} color="#ff4444" />
             </View>

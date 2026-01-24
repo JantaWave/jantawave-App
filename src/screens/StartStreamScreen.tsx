@@ -7,13 +7,13 @@ import {
   ScrollView,
   Dimensions,
   SafeAreaView,
-  Platform, // Ensure Platform is imported
+  Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-// 1. IMPORT SAFE AREA INSETS HOOK
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 
 import { mediaDevices } from 'react-native-webrtc';
 import {
@@ -45,11 +45,19 @@ const platforms = [
   { id: 'youtube', name: 'YouTube', color: ['#FF0000', '#FF0000'], icon: '▶️' },
 ];
 
+// Comment interface
+interface Comment {
+  id: string;
+  user: string;
+  text: string;
+  platform: string;
+  timestamp?: number;
+}
+
 export default function StartStreamScreen() {
   const router = useRouter();
   const { sessionId, scheduledTime } = useLocalSearchParams();
 
-  // 2. GET INSETS
   const insets = useSafeAreaInsets();
 
   // --- WebRTC State ---
@@ -64,7 +72,7 @@ export default function StartStreamScreen() {
   // --- UI State ---
   const [showComments, setShowComments] = useState(true);
   const [activePlatformIndex, setActivePlatformIndex] = useState(0);
-  const [comments, setComments] = useState(mockCommentsData);
+  const [comments, setComments] = useState<Comment[]>([]);
   const [viewers, setViewers] = useState({ youtube: 0, facebook: 0, total: 0 });
   const [likes, setLikes] = useState(0);
   const [showLikeAnimation, setShowLikeAnimation] = useState(false);
@@ -114,6 +122,19 @@ export default function StartStreamScreen() {
       return () => clearInterval(interval);
     }
   }, [scheduledTime]);
+
+  // Keep screen awake when streaming
+  useEffect(() => {
+    if (isStreaming) {
+      activateKeepAwakeAsync();
+    } else {
+      deactivateKeepAwake();
+    }
+
+    return () => {
+      deactivateKeepAwake();
+    };
+  }, [isStreaming]);
 
   // 2. Start Camera Preview
   useEffect(() => {
@@ -189,13 +210,11 @@ export default function StartStreamScreen() {
       await conn.connect(stream, { sessionId });
 
       conn.socket?.on('social_update', (data: any) => {
-        // 1. Update Viewers
         if (data.views) {
           setViewers((prev) => ({
             ...prev,
             youtube: data.views.youtube || 0,
             facebook: data.views.facebook || 0,
-            // Recalculate total dynamically
             total: (data.views.youtube || 0) + (data.views.facebook || 0),
           }));
         }
@@ -204,7 +223,6 @@ export default function StartStreamScreen() {
           const newTotalLikes = (data.likes.youtube || 0) + (data.likes.facebook || 0);
 
           setLikes((prev) => {
-            // If new likes are higher than previous, trigger animation
             if (newTotalLikes > prev) {
               setShowLikeAnimation(true);
               setTimeout(() => setShowLikeAnimation(false), 500);
@@ -212,28 +230,24 @@ export default function StartStreamScreen() {
             return newTotalLikes;
           });
         }
-        // 2. Update Comments
+
         if (data.comments && Array.isArray(data.comments) && data.comments.length > 0) {
           setComments((prevComments) => {
-            // Create a Set of existing IDs to prevent duplicates
             const existingIds = new Set(prevComments.map((c) => c.id));
-
-            // Filter out comments we already have
             const uniqueNewComments = data.comments.filter((c: any) => !existingIds.has(c.id));
 
             if (uniqueNewComments.length === 0) return prevComments;
 
-            // Combine and keep only the last 50 to save memory
             const updated = [...prevComments, ...uniqueNewComments];
             return updated.slice(-50);
           });
 
-          // Scroll to bottom
           setTimeout(() => {
             scrollViewRef.current?.scrollToEnd({ animated: true });
           }, 100);
         }
       });
+
       setIsStreaming(true);
       setStreamStatus('Live');
     } catch (err) {
@@ -341,6 +355,7 @@ export default function StartStreamScreen() {
   if (!cameraPermission?.granted || !micPermission?.granted) {
     return (
       <View className="flex-1 items-center justify-center bg-gray-900">
+        <StatusBar style="light" />
         <Text className="mb-4 text-white">Permissions required</Text>
         <TouchableOpacity
           onPress={async () => {
@@ -375,8 +390,10 @@ export default function StartStreamScreen() {
         )}
       </View>
 
-      {/* --- Top Overlay --- */}
-      <SafeAreaView className="absolute left-0 right-0 top-0 z-20 flex-row items-start justify-between p-4">
+      {/* --- Top Overlay with proper padding --- */}
+      <View
+        className="absolute left-0 right-0 top-0 z-20 flex-row items-start justify-between p-4"
+        style={{ paddingTop: insets.top + 8 }}>
         <View className="flex-col gap-2">
           {isStreaming ? (
             <>
@@ -408,7 +425,6 @@ export default function StartStreamScreen() {
           {isStreaming && (
             <>
               <View className="mb-1 flex-row items-center gap-2">
-                {/* YouTube View Count */}
                 <View className="flex-row items-center rounded-full bg-red-600/80 px-3 py-1.5">
                   <Text className="mr-1 text-[10px]">▶️</Text>
                   <Text className="ml-1 text-xs font-bold text-white">
@@ -416,7 +432,6 @@ export default function StartStreamScreen() {
                   </Text>
                 </View>
 
-                {/* Total View Count (Optional) */}
                 <View className="flex-row items-center rounded-full bg-black/60 px-3 py-1.5">
                   <Users color="white" size={14} />
                   <Text className="ml-1.5 text-xs font-bold text-white">
@@ -427,10 +442,10 @@ export default function StartStreamScreen() {
             </>
           )}
         </View>
-      </SafeAreaView>
+      </View>
 
       {/* --- Comments Overlay --- */}
-      {isStreaming && showComments && (
+      {isStreaming && showComments && comments.length > 0 && (
         <View className="absolute bottom-40 left-4 z-10 w-72">
           <View className="max-h-48">
             <ScrollView
@@ -466,10 +481,7 @@ export default function StartStreamScreen() {
         </TouchableOpacity>
       )}
 
-      {/* --- 4. Bottom Controls --- */}
-      {/* ✅ FIX: Applied paddingBottom based on insets 
-        We use insets.bottom + 24 (original padding) so it clears the home bar.
-      */}
+      {/* --- Bottom Controls --- */}
       <View
         className="absolute bottom-0 left-0 right-0 z-20 p-6 pt-0"
         style={{ paddingBottom: Math.max(insets.bottom, 20) + 24 }}>

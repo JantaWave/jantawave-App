@@ -109,12 +109,17 @@ export default function EditProfileScreen() {
       setCitiesList(fetchedCities);
 
       if (userData) {
+        // FIX: Try matching by ID first, then by name
         const currentCity = fetchedCities.find(
-          (c) => c.district_name?.toLowerCase() === userData?.district_name?.toLowerCase()
+          (c) =>
+            String(c.district_id) === String(userData?.district_id) || // Check ID first
+            c.district_name?.toLowerCase() === userData?.district_name?.toLowerCase()
         );
+
         if (currentCity) {
-          setSelectedCityId(currentCity.district_id);
-          await fetchBlocks(currentCity.district_id, userData);
+          // FIX: Convert to string explicitly for consistency
+          setSelectedCityId(String(currentCity.district_id));
+          await fetchBlocks(String(currentCity.district_id), userData);
         }
       }
     } catch (err) {
@@ -123,6 +128,8 @@ export default function EditProfileScreen() {
       setLoadingCities(false);
     }
   };
+
+  // Also update fetchBlocks:
 
   const fetchBlocks = async (districtId, userData = null) => {
     try {
@@ -133,11 +140,14 @@ export default function EditProfileScreen() {
 
       if (userData) {
         const currentBlock = fetchedBlocks.find(
-          (b) => b.block_name?.toLowerCase() === userData?.block_name?.toLowerCase()
+          (b) =>
+            String(b.block_id) === String(userData?.block_id) || // Check ID first
+            b.block_name?.toLowerCase() === userData?.block_name?.toLowerCase()
         );
+
         if (currentBlock) {
-          setSelectedBlockId(currentBlock.block_id);
-          await fetchVillages(currentBlock.block_id, userData);
+          setSelectedBlockId(String(currentBlock.block_id));
+          await fetchVillages(String(currentBlock.block_id), userData);
         }
       }
     } catch (err) {
@@ -146,6 +156,8 @@ export default function EditProfileScreen() {
       setLoadingBlocks(false);
     }
   };
+
+  // And fetchVillages:
 
   const fetchVillages = async (blockId, userData = null) => {
     try {
@@ -156,10 +168,13 @@ export default function EditProfileScreen() {
 
       if (userData) {
         const currentVillage = fetchedVillages.find(
-          (v) => v.village_name?.toLowerCase() === userData?.village_name?.toLowerCase()
+          (v) =>
+            String(v.village_id) === String(userData?.village_id) || // Check ID first
+            v.village_name?.toLowerCase() === userData?.village_name?.toLowerCase()
         );
+
         if (currentVillage) {
-          setSelectedVillageId(currentVillage.village_id);
+          setSelectedVillageId(String(currentVillage.village_id));
         }
       }
     } catch (err) {
@@ -168,7 +183,6 @@ export default function EditProfileScreen() {
       setLoadingVillages(false);
     }
   };
-
   // --- Dropdown Handlers ---
 
   const handleStateChange = (val) => {

@@ -34,10 +34,13 @@ yarn-error.*
 .DS_Store
 
 # Env
-.env
+*.env
 .env*.local
+*.xcode.env
 
 # TypeScript
 *.tsbuildinfo
 
-*.env
+GoogleService-Info.plist
+google-services.json
+e-janta-88ba4-firebase-adminsdk-fbsvc-55661fd2c8.json

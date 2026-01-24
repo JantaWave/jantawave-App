@@ -2,9 +2,11 @@ import 'react-native-webrtc';
 import '../global.css';
 import { useEffect } from 'react';
 import { View } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
+import * as Notifications from 'expo-notifications';
+import '@/src/notifications/notificationHandler';
 import {
   useFonts,
   Inter_400Regular,
@@ -34,6 +36,28 @@ SplashScreen.preventAutoHideAsync();
 function AppLayout() {
   // Now we can use the hook because we are inside the Custom ThemeProvider
   const { isDark, colors } = useAppTheme();
+  const router = useRouter();
+
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data: any = response.notification.request.content.data;
+
+      // ✅ open screens based on payload
+      if (data?.type === 'POST') {
+        router.push(`/(protected)/post/${data.postId}`);
+      }
+
+      if (data?.type === 'STREAM') {
+        router.push(`/(protected)/stream/${data.streamId}`);
+      }
+
+      if (data?.type === 'COMMENT') {
+        router.push(`/(protected)/post/${data.postId}?commentId=${data.commentId}`);
+      }
+    });
+
+    return () => sub.remove();
+  }, []);
 
   return (
     // Pass the correct React Navigation theme based on your custom context
