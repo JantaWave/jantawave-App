@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
   Image,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
   Alert,
   StatusBar,
@@ -16,8 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/src/context/ThemeContext';
 import { getLeaderProfile, getUserStreams } from '@/src/api/user';
 import { followUser, unfollowUser } from '@/src/api/community';
+import { getUserPosts } from '@/src/api';
 import { capitalize, getInitials } from '../utils/getInitials';
-import { getUserPosts } from '../api';
 
 const PAGE_LIMIT = 9;
 
@@ -26,11 +25,12 @@ interface UserProfile {
   id: string;
   first_name: string;
   last_name: string;
-  profile_image: string | null;
+  avatar_url: string | null;
   bio?: string;
   followers_count: number;
   following_count: number;
   streams_count: number;
+  posts_count: number;
   is_following: boolean;
 }
 
@@ -43,109 +43,121 @@ export default function LeaderProfileScreen() {
   const insets = useSafeAreaInsets();
   const { isDark } = useAppTheme();
 
+  /* ---------------- STATE ---------------- */
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [followLoading, setFollowLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('posts');
+  const [contentLoading, setContentLoading] = useState(false);
 
-  /* -------- POSTS PAGINATION -------- */
   const [posts, setPosts] = useState<any[]>([]);
-  const [postsOffset, setPostsOffset] = useState(0);
-  const [postsLoading, setPostsLoading] = useState(false);
+  const [postCursor, setPostCursor] = useState<string | null>(null);
   const [postsHasMore, setPostsHasMore] = useState(true);
 
-  /* -------- STREAMS PAGINATION -------- */
   const [streams, setStreams] = useState<any[]>([]);
-  const [streamsOffset, setStreamsOffset] = useState(0);
-  const [streamsLoading, setStreamsLoading] = useState(false);
+  const [streamCursor, setStreamCursor] = useState<string | null>(null);
   const [streamsHasMore, setStreamsHasMore] = useState(true);
 
   /* ---------------- FETCH PROFILE ---------------- */
   useEffect(() => {
-    if (id) fetchProfile();
+    if (!id) return;
+
+    const fetchProfile = async () => {
+      try {
+        setLoading(true);
+        const data = await getLeaderProfile(id as string);
+        setProfile(data);
+      } catch {
+        Alert.alert('Error', 'Failed to load profile');
+        router.back();
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProfile();
   }, [id]);
 
-  const fetchProfile = async () => {
-    try {
-      setLoading(true);
-      const data = await getLeaderProfile(id as string);
-      setProfile(data);
-    } catch {
-      Alert.alert('Error', 'Failed to load profile');
-      router.back();
-    } finally {
-      setLoading(false);
-    }
-  };
+  /* ---------------- FETCH POSTS ---------------- */
+  const fetchPosts = useCallback(
+    async (isLoadMore = false) => {
+      if (!profile || contentLoading || (isLoadMore && !postCursor)) return;
 
-  /* ---------------- POSTS ---------------- */
-  const [offset, setOffset] = useState(0);
-  const LIMIT = 9;
+      try {
+        setContentLoading(true);
 
-  const fetchPosts = async (isLoadMore = false) => {
-    try {
-      setContentLoading(true);
+        const currentCursor = isLoadMore ? postCursor : null;
+        const response = await getUserPosts(profile.id, PAGE_LIMIT, currentCursor);
+        const newPosts = response?.posts || [];
+        const nextCursor = response?.nextCursor;
 
-      const data = await getUserPosts(profile!.id, LIMIT, isLoadMore ? offset : 0);
-
-      setPosts((prev) => (isLoadMore ? [...prev, ...data] : data));
-
-      if (data.length === LIMIT) {
-        setOffset((prev) => prev + LIMIT);
+        setPosts((prev) => (isLoadMore ? [...prev, ...newPosts] : newPosts));
+        setPostCursor(nextCursor);
+        setPostsHasMore(!!nextCursor);
+      } catch (error) {
+        console.error(error); // Log the actual error
+        Alert.alert('Error', 'Failed to load posts');
+      } finally {
+        setContentLoading(false);
       }
-    } finally {
-      setContentLoading(false);
-    }
-  };
-
-  /* ---------------- STREAMS ---------------- */
-  const fetchStreams = async (reset = false) => {
-    if (!profile || streamsLoading || (!streamsHasMore && !reset)) return;
-
-    try {
-      setStreamsLoading(true);
-
-      const offset = reset ? 0 : streamsOffset;
-      const data = await getUserStreams(profile.id, PAGE_LIMIT, offset);
-
-      setStreams((prev) => (reset ? data : [...prev, ...data]));
-      setStreamsOffset(offset + PAGE_LIMIT);
-      setStreamsHasMore(data.length === PAGE_LIMIT);
-    } catch {
-      Alert.alert('Error', 'Failed to load streams');
-    } finally {
-      setStreamsLoading(false);
-    }
-  };
-
+    },
+    [profile, postCursor, contentLoading]
+  );
+  /* ---------------- FETCH STREAMS ---------------- */
+  const fetchStreams = useCallback(
+    async (isLoadMore = false) => {
+      if (!profile || contentLoading || (isLoadMore && !streamCursor)) return;
+      try {
+        setContentLoading(true);
+        const currentCursor = isLoadMore ? streamCursor : null;
+        const response = await getUserStreams(profile.id, PAGE_LIMIT, currentCursor);
+        const newStreams = response?.streams || [];
+        const nextCursor = response?.nextCursor;
+        setStreams((prev) => (isLoadMore ? [...prev, ...newStreams] : newStreams));
+        setStreamCursor(nextCursor);
+        setStreamsHasMore(!!nextCursor);
+      } catch (error) {
+        console.error(error);
+        Alert.alert('Error', 'Failed to load streams');
+      } finally {
+        setContentLoading(false);
+      }
+    },
+    [profile, streamCursor, contentLoading]
+  );
   /* ---------------- TAB CHANGE ---------------- */
   useEffect(() => {
-    if (!profile) return;
+    if (!profile || contentLoading) return;
 
-    if (activeTab === 'posts' && posts.length === 0) fetchPosts(true);
-    if (activeTab === 'streams' && streams.length === 0) fetchStreams(true);
+    if (activeTab === 'posts' && posts.length === 0) {
+      fetchPosts(false);
+    }
+
+    if (activeTab === 'streams' && streams.length === 0) {
+      fetchStreams(false);
+    }
   }, [activeTab, profile]);
 
   /* ---------------- FOLLOW ---------------- */
   const handleToggleFollow = async () => {
     if (!profile) return;
 
-    const prev = profile.is_following;
+    const prevFollow = profile.is_following;
     const prevCount = profile.followers_count;
 
     setProfile({
       ...profile,
-      is_following: !prev,
-      followers_count: prev ? prevCount - 1 : prevCount + 1,
+      is_following: !prevFollow,
+      followers_count: prevFollow ? prevCount - 1 : prevCount + 1,
     });
 
     try {
       setFollowLoading(true);
-      prev ? await unfollowUser(profile.id) : await followUser(profile.id);
+      prevFollow ? await unfollowUser(profile.id) : await followUser(profile.id);
     } catch {
       setProfile({
         ...profile,
-        is_following: prev,
+        is_following: prevFollow,
         followers_count: prevCount,
       });
       Alert.alert('Error', 'Action failed');
@@ -154,15 +166,13 @@ export default function LeaderProfileScreen() {
     }
   };
 
-  if (loading) {
-    return (
-      <View className="flex-1 items-center justify-center bg-white dark:bg-black">
-        <ActivityIndicator size="large" />
-      </View>
-    );
-  }
+  /* ---------------- LOAD MORE ---------------- */
+  const handleLoadMore = () => {
+    if (contentLoading) return;
 
-  if (!profile) return null;
+    if (activeTab === 'posts' && postsHasMore) fetchPosts(true);
+    if (activeTab === 'streams' && streamsHasMore) fetchStreams(true);
+  };
 
   /* ---------------- GRID ITEM ---------------- */
   const GridItem = ({ thumbnail }: { thumbnail?: string }) => (
@@ -177,93 +187,128 @@ export default function LeaderProfileScreen() {
     </View>
   );
 
-  /* ---------------- GRID RENDER ---------------- */
-  const renderGrid = (data: any[], loadMore: () => void, loadingMore: boolean) => (
-    <FlatList
-      data={data}
-      numColumns={3}
-      keyExtractor={(item) => item.id}
-      renderItem={({ item }) => <GridItem thumbnail={item.thumbnail_url || item.media_url} />}
-      onEndReached={loadMore}
-      onEndReachedThreshold={0.5}
-      ListFooterComponent={loadingMore ? <ActivityIndicator className="my-4" /> : null}
-    />
-  );
+  if (loading) {
+    return (
+      <View className="flex-1 items-center justify-center bg-white dark:bg-black">
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
 
+  if (!profile) return null;
+
+  const currentData = activeTab === 'posts' ? posts : streams;
+  const hasMore = activeTab === 'posts' ? postsHasMore : streamsHasMore;
+
+  /* ---------------- RENDER ---------------- */
   return (
     <View className="flex-1 bg-white dark:bg-black">
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
 
-      <ScrollView showsVerticalScrollIndicator={false}>
-        {/* HEADER */}
-        <View className="flex-row items-center px-4" style={{ paddingTop: insets.top + 8 }}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Feather name="arrow-left" size={24} />
-          </TouchableOpacity>
-          <Text className="ml-4 text-lg font-bold">{capitalize(profile.first_name)}</Text>
-        </View>
-
-        {/* AVATAR + STATS */}
-        <View className="mt-6 flex-row px-6">
-          {profile.profile_image ? (
-            <Image source={{ uri: profile.profile_image }} className="h-24 w-24 rounded-full" />
-          ) : (
-            <View className="h-24 w-24 items-center justify-center rounded-full bg-blue-500">
-              <Text className="text-3xl font-black text-white">
-                {getInitials(profile.first_name, profile.last_name)}
+      <FlatList
+        data={currentData}
+        key={activeTab}
+        numColumns={3}
+        keyExtractor={(item, index) => `${activeTab}-${item.id}-${index}`}
+        renderItem={({ item }) => <GridItem thumbnail={item.thumbnail_url || item.media_url} />}
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.5}
+        removeClippedSubviews
+        initialNumToRender={9}
+        maxToRenderPerBatch={9}
+        windowSize={5}
+        ListHeaderComponent={
+          <>
+            {/* HEADER */}
+            <View className="flex-row items-center px-4" style={{ paddingTop: insets.top + 8 }}>
+              <TouchableOpacity onPress={() => router.back()}>
+                <Feather name="arrow-left" size={24} color={isDark ? '#fff' : '#000'} />
+              </TouchableOpacity>
+              <Text className="ml-4 text-lg font-bold text-black dark:text-white">
+                {capitalize(profile.first_name)}
               </Text>
             </View>
-          )}
 
-          <View className="ml-6 flex-1 flex-row justify-around">
-            {[
-              { label: 'Streams', value: profile.streams_count },
-              { label: 'Followers', value: profile.followers_count },
-              { label: 'Following', value: profile.following_count },
-            ].map((item) => (
-              <View key={item.label} className="items-center">
-                <Text className="text-lg font-bold">{item.value}</Text>
-                <Text className="text-xs text-gray-500">{item.label}</Text>
+            {/* AVATAR + STATS */}
+            <View className="mt-6 flex-row px-6">
+              {profile.avatar_url ? (
+                <Image source={{ uri: profile.avatar_url }} className="h-24 w-24 rounded-full" />
+              ) : (
+                <View className="h-24 w-24 items-center justify-center rounded-full bg-blue-500">
+                  <Text className="text-3xl font-black text-white">
+                    {getInitials(profile.first_name, profile.last_name)}
+                  </Text>
+                </View>
+              )}
+
+              <View className="ml-6 flex-1 flex-row justify-around">
+                {[
+                  { label: 'Streams', value: profile.streams_count },
+                  { label: 'Followers', value: profile.followers_count },
+                  { label: 'Following', value: profile.following_count },
+                ].map((item) => (
+                  <View key={item.label} className="items-center">
+                    <Text className="text-lg font-bold text-black dark:text-white">
+                      {item.value}
+                    </Text>
+                    <Text className="text-xs text-gray-500">{item.label}</Text>
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
-        </View>
+            </View>
 
-        {/* FOLLOW */}
-        <View className="mt-4 px-6">
-          <TouchableOpacity
-            onPress={handleToggleFollow}
-            disabled={followLoading}
-            className={`h-9 items-center justify-center rounded-md ${
-              profile.is_following ? 'bg-gray-200' : 'bg-blue-500'
-            }`}>
-            {followLoading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text className={`font-semibold ${profile.is_following ? '' : 'text-white'}`}>
-                {profile.is_following ? 'Following' : 'Follow'}
-              </Text>
-            )}
-          </TouchableOpacity>
-        </View>
+            {/* FOLLOW BUTTON */}
+            <View className="mt-4 px-6">
+              <TouchableOpacity
+                onPress={handleToggleFollow}
+                disabled={followLoading}
+                className={`h-9 items-center justify-center rounded-md ${
+                  profile.is_following ? 'bg-gray-200 dark:bg-gray-700' : 'bg-blue-500'
+                }`}>
+                {followLoading ? (
+                  <ActivityIndicator size="small" color={profile.is_following ? '#000' : '#fff'} />
+                ) : (
+                  <Text
+                    className={`font-semibold ${
+                      profile.is_following ? 'text-black dark:text-white' : 'text-white'
+                    }`}>
+                    {profile.is_following ? 'Following' : 'Follow'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
 
-        {/* TABS */}
-        <View className="mt-6 flex-row border-t">
-          {['posts', 'streams'].map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              onPress={() => setActiveTab(tab as TabType)}
-              className={`flex-1 items-center py-3 ${activeTab === tab ? 'border-b-2' : ''}`}>
-              <Feather name={tab === 'posts' ? 'grid' : 'video'} size={20} />
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* CONTENT */}
-        {activeTab === 'posts'
-          ? renderGrid(posts, () => fetchPosts(), postsLoading)
-          : renderGrid(streams, () => fetchStreams(), streamsLoading)}
-      </ScrollView>
+            {/* TABS */}
+            <View className="mt-6 flex-row border-t border-gray-200 dark:border-gray-800">
+              {(['posts', 'streams'] as TabType[]).map((tab) => (
+                <TouchableOpacity
+                  key={tab}
+                  onPress={() => setActiveTab(tab)}
+                  className={`flex-1 items-center py-3 ${
+                    activeTab === tab ? 'border-b-2 border-black dark:border-white' : ''
+                  }`}>
+                  <Feather
+                    name={tab === 'posts' ? 'grid' : 'video'}
+                    size={20}
+                    color={isDark ? '#fff' : '#000'}
+                  />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        }
+        ListFooterComponent={
+          contentLoading && hasMore ? <ActivityIndicator className="my-4" size="small" /> : null
+        }
+        ListEmptyComponent={
+          !contentLoading ? (
+            <View className="items-center justify-center py-20">
+              <Feather name={activeTab === 'posts' ? 'image' : 'video'} size={48} color="#999" />
+              <Text className="mt-4 text-gray-500">No {activeTab} yet</Text>
+            </View>
+          ) : null
+        }
+      />
     </View>
   );
 }

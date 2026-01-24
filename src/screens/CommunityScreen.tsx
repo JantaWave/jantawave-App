@@ -10,7 +10,7 @@ export default function CommunityScreen() {
   const isStreamer = user.role === 'leader';
 
   return (
-    <View className="flex-1 bg-white dark:bg-[#1a1a1a]">
+    <View className="flex-1 bg-background-light dark:bg-background-dark">
       {/* ✅ Header loaded only once */}
       <AppHeader title="Community" iconName="group" />
 

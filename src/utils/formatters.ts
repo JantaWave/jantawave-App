@@ -1,7 +1,8 @@
 export const formatCount = (num) => {
-  if (!num) return '0';
+  if (!num || num === null) return '0';
 
   const n = Number(num);
+  console.log(n);
   if (n === 0) return '0';
 
   // Billions

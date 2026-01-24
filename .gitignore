@@ -40,3 +40,4 @@ yarn-error.*
 # TypeScript
 *.tsbuildinfo
 
+*.env

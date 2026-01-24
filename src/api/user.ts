@@ -15,6 +15,7 @@ export const getUserProfile = async () => {
 };
 
 export const updateUserProfile = async (userData) => {
+  // userData should contain: { first_name, last_name, bio, avatar_url, village, ... }
   const response = await axiosClient.patch('/api/v1/user/profile', userData);
   return response.data;
 };
@@ -30,8 +31,8 @@ export const getUserProfileStats = async () => {
 //   return response.data;
 // };
 
-export const getUserStreams = async (limit = 5, cursor = null) => {
-  const response = await axiosClient.get('/api/v1/streams/', {
+export const getUserStreams = async (userId: string, limit = 5, cursor = null) => {
+  const response = await axiosClient.get(`/api/v1/streams/${userId}`, {
     params: {
       limit,
       cursor,

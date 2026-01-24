@@ -1,21 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
-  ScrollView,
   ActivityIndicator,
   Modal,
   useColorScheme,
   Platform,
-  KeyboardAvoidingView,
   SafeAreaView,
+  StatusBar,
+  Keyboard,
 } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import {
   sendOTP,
   register,
@@ -47,6 +48,80 @@ interface Village {
   village_name: string;
 }
 
+// --- REUSABLE CUSTOM PICKER COMPONENT ---
+const CustomPicker = ({
+  value,
+  items,
+  labelKey = 'label',
+  valueKey = 'value',
+  placeholder,
+  onValueChange,
+  enabled = true,
+  isLoading = false,
+  colors,
+}: {
+  value: string;
+  items: any[];
+  labelKey?: string;
+  valueKey?: string;
+  placeholder: string;
+  onValueChange: (val: string) => void;
+  enabled?: boolean;
+  isLoading?: boolean;
+  colors: any;
+}) => {
+  const selectedItem = items.find((item) => String(item[valueKey]) === String(value));
+
+  return (
+    <View
+      onTouchStart={() => Keyboard.dismiss()}
+      className="relative h-[54px] justify-center rounded-xl border border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
+      <View className="absolute inset-0 justify-center px-4">
+        <Text
+          numberOfLines={1}
+          style={{
+            color:
+              !enabled || isLoading
+                ? colors.placeholder
+                : selectedItem
+                  ? colors.textPrimary
+                  : colors.placeholder,
+          }}
+          className="text-base">
+          {isLoading ? 'Loading...' : selectedItem ? selectedItem[labelKey] : placeholder}
+        </Text>
+      </View>
+
+      <View className="absolute right-4 top-0 h-full justify-center">
+        <Feather name="chevron-down" size={20} color={colors.placeholder} />
+      </View>
+
+      <Picker
+        selectedValue={value}
+        onValueChange={(itemValue) => onValueChange(String(itemValue))}
+        enabled={enabled && !isLoading}
+        onFocus={() => Keyboard.dismiss()}
+        mode="dropdown"
+        dropdownIconColor="transparent"
+        style={{
+          opacity: 0,
+          position: 'absolute',
+          width: '100%',
+          height: '100%',
+        }}>
+        {items.map((item, index) => (
+          <Picker.Item
+            key={index}
+            label={item[labelKey]}
+            value={String(item[valueKey])}
+            color={colors.textPrimary}
+          />
+        ))}
+      </Picker>
+    </View>
+  );
+};
+
 export default function RegisterScreen() {
   const Toast = useToast();
   const router = useRouter();
@@ -58,7 +133,25 @@ export default function RegisterScreen() {
     placeholder: isDark ? '#94a3b8' : '#64748b',
     textPrimary: isDark ? '#f8fafc' : '#0f172a',
     surface: isDark ? '#171717' : '#f8f9fa',
+    primary: '#007AFF',
   };
+
+  // --- KEYBOARD VISIBILITY STATE ---
+  const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => {
+      setKeyboardVisible(true);
+    });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardVisible(false);
+    });
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   // Form step management
   const [currentStep, setCurrentStep] = useState(1);
@@ -77,6 +170,7 @@ export default function RegisterScreen() {
   const [displayDate, setDisplayDate] = useState('');
   const [gender, setGender] = useState('');
   const [contact, setContact] = useState('');
+  const [acceptWhatsapp, setAcceptWhatsapp] = useState(false);
 
   // OTP Logic
   const [otp, setOtp] = useState('');
@@ -85,6 +179,12 @@ export default function RegisterScreen() {
   const [verifyingOtp, setVerifyingOtp] = useState(false);
   const [timer, setTimer] = useState(0);
   const [resendCount, setResendCount] = useState(0);
+  const otpInputRef = useRef(null);
+  const mpinInputRef = useRef(null);
+  const confirmMpinInputRef = useRef(null);
+
+  // Track last verified contact
+  const [lastVerifiedContact, setLastVerifiedContact] = useState('');
 
   // Step 2: Location
   const [states, setStates] = useState<State[]>([]);
@@ -109,7 +209,13 @@ export default function RegisterScreen() {
   const [firstNameError, setFirstNameError] = useState('');
   const [lastNameError, setLastNameError] = useState('');
 
-  // --- Calculations for Age Restriction (15+) ---
+  // Static Data for Gender
+  const genderOptions = [
+    { label: 'Male', value: 'male' },
+    { label: 'Female', value: 'female' },
+    { label: 'Other', value: 'other' },
+  ];
+
   const minAgeDate = new Date();
   minAgeDate.setFullYear(minAgeDate.getFullYear() - 15);
 
@@ -117,23 +223,29 @@ export default function RegisterScreen() {
   useEffect(() => {
     fetchStates();
   }, []);
+
   useEffect(() => {
-    if (selectedState) fetchCities(selectedState);
-    else {
+    if (selectedState) {
+      fetchCities(selectedState);
+    } else {
       setCities([]);
       setSelectedCity('');
     }
   }, [selectedState]);
+
   useEffect(() => {
-    if (selectedCity) fetchBlocks(selectedCity);
-    else {
+    if (selectedCity) {
+      fetchBlocks(selectedCity);
+    } else {
       setBlocks([]);
       setSelectedBlock('');
     }
   }, [selectedCity]);
+
   useEffect(() => {
-    if (selectedBlock) fetchVillages(selectedBlock);
-    else {
+    if (selectedBlock) {
+      fetchVillages(selectedBlock);
+    } else {
       setVillages([]);
       setSelectedVillage('');
     }
@@ -152,16 +264,6 @@ export default function RegisterScreen() {
     };
   }, [timer]);
 
-  // Auto Verify Effect
-  useEffect(() => {
-    if (otp.length === 6) {
-      const timeout = setTimeout(() => {
-        handleVerifyOTP();
-      }, 300);
-      return () => clearTimeout(timeout);
-    }
-  }, [otp]);
-
   // --- Fetch Functions ---
   const fetchStates = async () => {
     try {
@@ -174,6 +276,7 @@ export default function RegisterScreen() {
       setLoadingStates(false);
     }
   };
+
   const fetchCities = async (id: string) => {
     try {
       setLoadingCities(true);
@@ -185,24 +288,26 @@ export default function RegisterScreen() {
       setLoadingCities(false);
     }
   };
+
   const fetchBlocks = async (id: string) => {
     try {
       setLoadingBlocks(true);
       const res = await getBlocks(id);
       setBlocks(res.data || []);
     } catch (e) {
-      Toast.show('Failed to load blocks', { type: 'danger' });
+      Toast.show(getErrorMessage(e), { type: 'warning' });
     } finally {
       setLoadingBlocks(false);
     }
   };
+
   const fetchVillages = async (id: string) => {
     try {
       setLoadingVillages(true);
       const res = await getVillages(id);
       setVillages(res.data || []);
     } catch (e) {
-      Toast.show('Failed to load villages', { type: 'danger' });
+      Toast.show(getErrorMessage(e), { type: 'warning' });
     } finally {
       setLoadingVillages(false);
     }
@@ -258,6 +363,10 @@ export default function RegisterScreen() {
     }
     if (!validateContact(contact)) {
       Toast.show('Please enter a valid 10-digit contact number', { type: 'warning' });
+      return false;
+    }
+    if (!acceptWhatsapp) {
+      Toast.show('Please accept WhatsApp notifications to proceed', { type: 'warning' });
       return false;
     }
     return true;
@@ -319,7 +428,7 @@ export default function RegisterScreen() {
     }
   };
 
-  const handleVerifyOTP = async () => {
+  const handleVerifyOTP = useCallback(async () => {
     if (!validateOTP(otp)) {
       Toast.show('Please enter a valid 6-digit OTP', { type: 'error' });
       return;
@@ -328,6 +437,7 @@ export default function RegisterScreen() {
       setVerifyingOtp(true);
       await verifyOTP({ contact: `+91${contact}`, otp: otp });
       setOtpVerified(true);
+      setLastVerifiedContact(contact);
       Toast.show('Verified Successfully', { type: 'success' });
       setShowOtpModal(false);
     } catch (error: any) {
@@ -335,23 +445,54 @@ export default function RegisterScreen() {
     } finally {
       setVerifyingOtp(false);
     }
-  };
+  }, [otp, contact, Toast]);
+
+  // Auto Verify Effect
+  useEffect(() => {
+    if (otp.length === 6) {
+      const timeout = setTimeout(() => {
+        handleVerifyOTP();
+      }, 300);
+      return () => clearTimeout(timeout);
+    }
+  }, [otp, handleVerifyOTP]);
 
   const handleEditContact = () => {
     setShowOtpModal(false);
+    setOtp('');
+    setTimer(0);
+    setOtpSent(false);
+  };
+
+  const handleResetContact = () => {
+    setContact('');
+    setOtp('');
+    setOtpVerified(false);
     setOtpSent(false);
     setTimer(0);
     setResendCount(0);
   };
 
-  // ✅ New Handler to allow changing number after verification
-  const handleResetContact = () => {
-    setOtpVerified(false);
-    setOtpSent(false);
-    setOtp('');
-    setTimer(0);
-    setResendCount(0);
-  };
+  useEffect(() => {
+    if (contact.length === 10) {
+      if (contact === lastVerifiedContact) {
+        setOtpVerified(true);
+        Toast.show('Contact already verified', { type: 'success' });
+      } else if (otpVerified) {
+        setOtpVerified(false);
+        setOtpSent(false);
+        setOtp('');
+        setTimer(0);
+      }
+    } else {
+      if (otpVerified && contact !== lastVerifiedContact) {
+        setOtpVerified(false);
+        setOtpSent(false);
+        setOtp('');
+        setTimer(0);
+      }
+    }
+  }, [contact, lastVerifiedContact, otpVerified, Toast]);
 
   const handleNextStep = () => {
     if (currentStep === 1 && validateStep1()) {
@@ -400,18 +541,19 @@ export default function RegisterScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-background-light dark:bg-background-dark">
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        className="flex-1"
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
-        <ScrollView
-          className="flex-1 px-5"
-          contentContainerStyle={{ flexGrow: 1, paddingBottom: 40 }}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled">
+    <SafeAreaView
+      className="flex-1 bg-background-light dark:bg-background-dark"
+      style={{ paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0 }}>
+      <KeyboardAwareScrollView
+        scrollEnabled={isKeyboardVisible}
+        extraScrollHeight={20} // Reduced space between keyboard and component
+        enableOnAndroid={true}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: 50 }}
+        className="flex-1 px-5">
+        <View>
           {/* Header */}
-          <View className="pb-5 pt-8">
+          <View className="mt-2 pb-5">
             <Text className="mb-2 text-4xl font-bold text-text-primary-light dark:text-text-primary-dark">
               Create Account
             </Text>
@@ -485,25 +627,25 @@ export default function RegisterScreen() {
               {/* Gender Picker */}
               <View className="mb-5">
                 <Label text="Gender" />
-                <View className="overflow-hidden rounded-xl border border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
-                  <Picker
-                    selectedValue={gender}
-                    onValueChange={setGender}
-                    style={{ color: colors.textPrimary }}
-                    dropdownIconColor={colors.placeholder}>
-                    <Picker.Item label="Select Gender" value="" color={colors.placeholder} />
-                    <Picker.Item label="Male" value="male" color={colors.textPrimary} />
-                    <Picker.Item label="Female" value="female" color={colors.textPrimary} />
-                    <Picker.Item label="Other" value="other" color={colors.textPrimary} />
-                  </Picker>
-                </View>
+                <CustomPicker
+                  value={gender}
+                  items={genderOptions}
+                  labelKey="label"
+                  valueKey="value"
+                  placeholder="Select Gender"
+                  onValueChange={setGender}
+                  colors={colors}
+                />
               </View>
 
               {/* Date of Birth */}
               <View className="mb-5">
                 <Label text="Date of Birth" />
                 <TouchableOpacity
-                  onPress={() => setShowDatePicker(true)}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setShowDatePicker(true);
+                  }}
                   activeOpacity={0.8}
                   className="flex-row items-center gap-3 rounded-xl border border-border-light bg-surface-light px-4 py-3.5 dark:border-border-dark dark:bg-surface-dark">
                   <Feather name="calendar" size={18} color={colors.textPrimary} />
@@ -530,29 +672,43 @@ export default function RegisterScreen() {
                 )}
               </View>
 
-              {/* Contact Number */}
+              {/* Contact Number & WhatsApp Consent */}
               <View className="mb-5">
                 <Label text="Contact Number" />
                 <View className="flex-row items-center gap-3">
                   <TextInput
                     className="flex-1 rounded-xl border border-border-light bg-surface-light px-4 py-3.5 text-base text-text-primary-light dark:border-border-dark dark:bg-surface-dark dark:text-text-primary-dark"
                     value={contact}
-                    onChangeText={setContact}
+                    onChangeText={(text) => {
+                      const numeric = text.replace(/[^0-9]/g, '');
+                      setContact(numeric);
+                    }}
                     placeholder="Enter 10-digit contact"
                     placeholderTextColor={colors.placeholder}
                     keyboardType="phone-pad"
                     maxLength={10}
-                    editable={!otpVerified}
+                    editable={!otpVerified || contact !== lastVerifiedContact}
                   />
 
+                  {/* Send OTP Button */}
                   <TouchableOpacity
                     className={`min-w-[100px] items-center rounded-xl px-5 py-3.5 ${
-                      loading || timer > 0 || otpVerified
+                      loading ||
+                      timer > 0 ||
+                      otpVerified ||
+                      !acceptWhatsapp ||
+                      contact.length !== 10
                         ? 'bg-text-secondary-light dark:bg-text-secondary-dark'
                         : 'bg-primary'
                     }`}
                     onPress={() => handleSendOTP(false)}
-                    disabled={loading || timer > 0 || otpVerified}>
+                    disabled={
+                      loading ||
+                      timer > 0 ||
+                      otpVerified ||
+                      !acceptWhatsapp ||
+                      contact.length !== 10
+                    }>
                     {loading ? (
                       <ActivityIndicator size="small" color="#ffffff" />
                     ) : otpVerified ? (
@@ -565,9 +721,26 @@ export default function RegisterScreen() {
                   </TouchableOpacity>
                 </View>
 
-                {/* Status Helpers: Resend Timer OR Change Number Link */}
+                {/* WhatsApp Checkbox */}
+                {!otpVerified && (
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => setAcceptWhatsapp(!acceptWhatsapp)}
+                    className="mt-3 flex-row items-start gap-2 pr-2">
+                    <Feather
+                      name={acceptWhatsapp ? 'check-square' : 'square'}
+                      size={20}
+                      color={acceptWhatsapp ? colors.primary : colors.placeholder}
+                      style={{ marginTop: 2 }}
+                    />
+                    <Text className="flex-1 text-sm text-text-secondary-light dark:text-text-secondary-dark">
+                      I agree to receive important updates & notifications from e-Janta on WhatsApp.
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Status Helpers */}
                 <View className="mt-2 flex-row items-start justify-between">
-                  {/* Left: Timer */}
                   <View>
                     {timer > 0 && !otpVerified && (
                       <Text className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
@@ -576,8 +749,7 @@ export default function RegisterScreen() {
                     )}
                   </View>
 
-                  {/* Right: Change Number (Visible ONLY if Verified) */}
-                  {otpVerified && (
+                  {otpVerified && contact !== lastVerifiedContact && (
                     <TouchableOpacity onPress={handleResetContact}>
                       <View className="flex-row items-center gap-1">
                         <Feather name="edit-2" size={12} color={colors.placeholder} />
@@ -602,97 +774,65 @@ export default function RegisterScreen() {
               {/* State */}
               <View className="mb-5">
                 <Label text="State" />
-                <View className="overflow-hidden rounded-xl border border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
-                  <Picker
-                    selectedValue={selectedState}
-                    onValueChange={setSelectedState}
-                    style={{ color: colors.textPrimary }}
-                    dropdownIconColor={colors.placeholder}
-                    enabled={!loadingStates}>
-                    <Picker.Item label="Select State" value="" color={colors.placeholder} />
-                    {states.map((s) => (
-                      <Picker.Item
-                        key={s.state_id}
-                        label={s.state_name}
-                        value={String(s.state_id)}
-                        color={colors.textPrimary}
-                      />
-                    ))}
-                  </Picker>
-                </View>
+                <CustomPicker
+                  value={selectedState}
+                  items={states}
+                  labelKey="state_name"
+                  valueKey="state_id"
+                  placeholder="Select State"
+                  onValueChange={setSelectedState}
+                  isLoading={loadingStates}
+                  enabled={!loadingStates}
+                  colors={colors}
+                />
               </View>
 
               {/* City */}
               <View className="mb-5">
                 <Label text="District" />
-                <View className="overflow-hidden rounded-xl border border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
-                  <Picker
-                    selectedValue={selectedCity}
-                    onValueChange={setSelectedCity}
-                    style={{ color: colors.textPrimary }}
-                    dropdownIconColor={colors.placeholder}
-                    enabled={!loadingCities && !!selectedState}>
-                    <Picker.Item label="Select District" value="" color={colors.placeholder} />
-                    {cities.map((c) => (
-                      <Picker.Item
-                        key={c.district_id}
-                        label={c.district_name}
-                        value={String(c.district_id)}
-                        color={colors.textPrimary}
-                      />
-                    ))}
-                  </Picker>
-                </View>
+                <CustomPicker
+                  value={selectedCity}
+                  items={cities}
+                  labelKey="district_name"
+                  valueKey="district_id"
+                  placeholder="Select District"
+                  onValueChange={setSelectedCity}
+                  isLoading={loadingCities}
+                  enabled={!loadingCities && !!selectedState}
+                  colors={colors}
+                />
               </View>
 
               {/* Block */}
               <View className="mb-5">
                 <Label text="Block" />
-                <View className="overflow-hidden rounded-xl border border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
-                  <Picker
-                    selectedValue={selectedBlock}
-                    onValueChange={setSelectedBlock}
-                    style={{ color: colors.textPrimary }}
-                    dropdownIconColor={colors.placeholder}
-                    enabled={!loadingBlocks && !!selectedCity}>
-                    <Picker.Item label="Select Block" value="" color={colors.placeholder} />
-                    {blocks.map((b) => (
-                      <Picker.Item
-                        key={b.block_id}
-                        label={b.block_name}
-                        value={String(b.block_id)}
-                        color={colors.textPrimary}
-                      />
-                    ))}
-                  </Picker>
-                </View>
+                <CustomPicker
+                  value={selectedBlock}
+                  items={blocks}
+                  labelKey="block_name"
+                  valueKey="block_id"
+                  placeholder="Select Block"
+                  onValueChange={setSelectedBlock}
+                  isLoading={loadingBlocks}
+                  enabled={!loadingBlocks && !!selectedCity}
+                  colors={colors}
+                />
               </View>
 
               {/* Village */}
               <View className="mb-5">
                 <Label text="Region/Village" />
-                <View className="overflow-hidden rounded-xl border border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark">
-                  <Picker
-                    selectedValue={selectedVillage}
-                    onValueChange={setSelectedVillage}
-                    style={{ color: colors.textPrimary }}
-                    dropdownIconColor={colors.placeholder}
-                    enabled={!loadingVillages && !!selectedBlock}>
-                    <Picker.Item
-                      label="Select Region/Village"
-                      value=""
-                      color={colors.placeholder}
-                    />
-                    {villages.map((v) => (
-                      <Picker.Item
-                        key={v.village_id}
-                        label={v.village_name}
-                        value={String(v.village_id)}
-                        color={colors.textPrimary}
-                      />
-                    ))}
-                  </Picker>
-                </View>
+                <CustomPicker
+                  value={selectedVillage}
+                  items={villages}
+                  labelKey="village_name"
+                  valueKey="village_id"
+                  placeholder="Select Region/Village"
+                  onValueChange={setSelectedVillage}
+                  isLoading={loadingVillages}
+                  enabled={!loadingVillages && !!selectedBlock}
+                  colors={colors}
+                />
               </View>
             </View>
           )}
@@ -738,85 +878,87 @@ export default function RegisterScreen() {
               </Text>
             </TouchableOpacity>
           )}
-        </ScrollView>
-      </KeyboardAvoidingView>
-
+        </View>
+      </KeyboardAwareScrollView>
       {/* OTP Verification Modal */}
       <Modal visible={showOtpModal} transparent animationType="slide" onRequestClose={() => {}}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          className="flex-1 justify-center bg-black/50 px-5">
-          <View className="w-full rounded-2xl bg-surface-light p-6 dark:bg-surface-dark">
-            <View className="mb-4 flex-row items-center justify-between">
-              <Text className="text-xl font-bold text-text-primary-light dark:text-text-primary-dark">
-                Verify OTP
-              </Text>
-              <TouchableOpacity onPress={handleEditContact}>
-                <Text className="font-medium text-primary">Edit Number</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text className="mb-6 text-center text-sm text-text-secondary-light dark:text-text-secondary-dark">
-              Enter the 6-digit OTP sent to +91{contact}
-            </Text>
-
-            <View className="relative mb-6 flex-row justify-between">
-              {[...Array(6)].map((_, i) => (
-                <View
-                  key={i}
-                  className={`h-12 w-12 items-center justify-center rounded-lg border text-lg font-bold ${
-                    otp[i]
-                      ? 'border-primary bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark'
-                  }`}>
-                  <Text className="text-lg font-semibold text-text-primary-light dark:text-text-primary-dark">
-                    {otp[i] || ''}
-                  </Text>
-                </View>
-              ))}
-              <TextInput
-                className="absolute inset-0 opacity-0"
-                keyboardType="number-pad"
-                maxLength={6}
-                value={otp}
-                onChangeText={setOtp}
-                autoFocus
-              />
-            </View>
-
-            <TouchableOpacity
-              className={`mb-4 items-center rounded-xl py-3.5 ${
-                verifyingOtp ? 'bg-text-secondary-light dark:bg-text-secondary-dark' : 'bg-success'
-              }`}
-              onPress={handleVerifyOTP}
-              disabled={verifyingOtp}>
-              {verifyingOtp ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text className="font-semibold text-white">Verify OTP</Text>
-              )}
-            </TouchableOpacity>
-
-            <View className="flex-col items-center gap-2">
-              <Text className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
-                Didn’t receive OTP?
-              </Text>
-              <View className="flex-row gap-4">
-                <TouchableOpacity
-                  onPress={() => handleSendOTP(false)}
-                  disabled={timer > 0 || loading}>
-                  <Text
-                    className={`text-sm font-semibold ${
-                      timer > 0
-                        ? 'text-text-secondary-light dark:text-text-secondary-dark'
-                        : 'text-primary'
-                    }`}>
-                    {timer > 0 ? `WhatsApp (${timer}s)` : 'Resend WhatsApp'}
-                  </Text>
+        <View className="flex-1 justify-center bg-black/50 px-5">
+          <KeyboardAwareScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+            scrollEnabled={isKeyboardVisible}
+            enableOnAndroid={true}
+            extraScrollHeight={20}
+            keyboardShouldPersistTaps="handled">
+            <View className="w-full rounded-2xl bg-surface-light p-6 dark:bg-surface-dark">
+              <View className="mb-4 flex-row items-center justify-between">
+                <Text className="text-xl font-bold text-text-primary-light dark:text-text-primary-dark">
+                  Verify OTP
+                </Text>
+                <TouchableOpacity onPress={handleEditContact}>
+                  <Text className="font-medium text-primary">Edit Number</Text>
                 </TouchableOpacity>
-                {resendCount > 0 && (
+              </View>
+
+              <Text className="mb-6 text-center text-sm text-text-secondary-light dark:text-text-secondary-dark">
+                Enter the 6-digit OTP sent to +91{contact}
+              </Text>
+
+              <View className="relative mb-6 flex-row justify-between">
+                {[...Array(6)].map((_, i) => (
+                  <View
+                    key={i}
+                    className={`h-12 w-12 items-center justify-center rounded-lg border ${
+                      otp[i]
+                        ? 'border-primary bg-blue-50 dark:bg-blue-900/20'
+                        : i === otp.length
+                          ? 'border-primary bg-blue-50/50 dark:bg-blue-900/10'
+                          : 'border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark'
+                    }`}>
+                    <Text className="text-lg font-semibold text-text-primary-light dark:text-text-primary-dark">
+                      {otp[i] || (i === otp.length && isKeyboardVisible ? '|' : '')}
+                    </Text>
+                  </View>
+                ))}
+                <TextInput
+                  ref={otpInputRef}
+                  className="absolute inset-0 opacity-0"
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  value={otp}
+                  onChangeText={(text) => {
+                    const numeric = text.replace(/[^0-9]/g, '');
+                    setOtp(numeric);
+                    if (numeric.length === 6) {
+                      Keyboard.dismiss();
+                    }
+                  }}
+                  autoFocus
+                  returnKeyType="done"
+                />
+              </View>
+
+              <TouchableOpacity
+                className={`mb-4 items-center rounded-xl py-3.5 ${
+                  otp.length !== 6 || verifyingOtp
+                    ? 'bg-text-secondary-light/50 dark:bg-text-secondary-dark/50'
+                    : 'bg-success'
+                }`}
+                onPress={handleVerifyOTP}
+                disabled={otp.length !== 6 || verifyingOtp}>
+                {verifyingOtp ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text className="font-semibold text-white">Verify OTP</Text>
+                )}
+              </TouchableOpacity>
+
+              <View className="flex-col items-center gap-2">
+                <Text className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
+                  Didn't receive OTP?
+                </Text>
+                <View className="flex-row gap-4">
                   <TouchableOpacity
-                    onPress={() => handleSendOTP(true)}
+                    onPress={() => handleSendOTP(false)}
                     disabled={timer > 0 || loading}>
                     <Text
                       className={`text-sm font-semibold ${
@@ -824,72 +966,157 @@ export default function RegisterScreen() {
                           ? 'text-text-secondary-light dark:text-text-secondary-dark'
                           : 'text-primary'
                       }`}>
-                      {timer > 0 ? `SMS (${timer}s)` : 'Send via SMS'}
+                      {timer > 0 ? `WhatsApp (${timer}s)` : 'Resend WhatsApp'}
                     </Text>
                   </TouchableOpacity>
-                )}
+                  {resendCount > 0 && (
+                    <TouchableOpacity
+                      onPress={() => handleSendOTP(true)}
+                      disabled={timer > 0 || loading}>
+                      <Text
+                        className={`text-sm font-semibold ${
+                          timer > 0
+                            ? 'text-text-secondary-light dark:text-text-secondary-dark'
+                            : 'text-primary'
+                        }`}>
+                        {timer > 0 ? `SMS (${timer}s)` : 'Send via SMS'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             </View>
-          </View>
-        </KeyboardAvoidingView>
+          </KeyboardAwareScrollView>
+        </View>
       </Modal>
-
       {/* MPIN Modal */}
-      <Modal
-        visible={showMpinModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowMpinModal(false)}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          className="flex-1 justify-center bg-black/50 px-5">
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={() => setShowMpinModal(false)}
-            className="w-full">
-            <TouchableOpacity
-              activeOpacity={1}
-              className="w-full rounded-2xl bg-surface-light p-6 dark:bg-surface-dark">
+      <Modal visible={showMpinModal} transparent animationType="slide" onRequestClose={() => {}}>
+        <View className="flex-1 justify-center bg-black/50 px-5">
+          <KeyboardAwareScrollView
+            contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+            scrollEnabled={isKeyboardVisible}
+            enableOnAndroid={true}
+            extraScrollHeight={20}
+            keyboardShouldPersistTaps="handled">
+            <View className="w-full rounded-2xl bg-surface-light p-6 dark:bg-surface-dark">
               <Text className="mb-5 text-xl font-bold text-text-primary-light dark:text-text-primary-dark">
                 Set MPIN
               </Text>
 
               <View className="mb-4">
                 <Label text="Enter MPIN" />
-                <TextInput
-                  className="rounded-xl border border-border-light bg-surface-light p-3 text-center text-lg tracking-widest text-text-primary-light dark:border-border-dark dark:bg-surface-dark dark:text-text-primary-dark"
-                  value={mpin}
-                  onChangeText={setMpin}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  secureTextEntry
-                />
+                <View className="relative mb-6 flex-row justify-between">
+                  {[...Array(4)].map((_, i) => (
+                    <View
+                      key={i}
+                      className={`h-12 w-12 items-center justify-center rounded-lg border ${
+                        mpin[i]
+                          ? 'border-primary bg-blue-50 dark:bg-blue-900/20'
+                          : i === mpin.length
+                            ? 'border-primary bg-blue-50/50 dark:bg-blue-900/10'
+                            : 'border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark'
+                      }`}>
+                      <Text className="text-lg font-semibold text-text-primary-light dark:text-text-primary-dark">
+                        {mpin[i] ? '•' : i === mpin.length && isKeyboardVisible ? '|' : ''}
+                      </Text>
+                    </View>
+                  ))}
+                  <TextInput
+                    ref={mpinInputRef}
+                    className="absolute inset-0 opacity-0"
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    value={mpin}
+                    onChangeText={(text) => {
+                      const numeric = text.replace(/[^0-9]/g, '');
+                      setMpin(numeric);
+                      if (numeric.length === 4) {
+                        setTimeout(() => {
+                          confirmMpinInputRef.current?.focus();
+                        }, 100);
+                      }
+                    }}
+                    autoFocus
+                    returnKeyType="next"
+                    onSubmitEditing={() => confirmMpinInputRef.current?.focus()}
+                  />
+                </View>
               </View>
 
               <View className="mb-4">
                 <Label text="Confirm MPIN" />
-                <TextInput
-                  className="rounded-xl border border-border-light bg-surface-light p-3 text-center text-lg tracking-widest text-text-primary-light dark:border-border-dark dark:bg-surface-dark dark:text-text-primary-dark"
-                  value={confirmMpin}
-                  onChangeText={setConfirmMpin}
-                  keyboardType="number-pad"
-                  maxLength={4}
-                  secureTextEntry
-                />
-              </View>
 
+                {/* Wrap this section to ensure tapping anywhere focuses the input */}
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => {
+                    if (mpin.length === 4) confirmMpinInputRef.current?.focus();
+                  }}
+                  className="relative mb-6 flex-row justify-between">
+                  {[...Array(4)].map((_, i) => (
+                    <View
+                      key={i}
+                      className={`h-12 w-12 items-center justify-center rounded-lg border ${
+                        confirmMpin[i]
+                          ? 'border-primary bg-blue-50 dark:bg-blue-900/20'
+                          : i === confirmMpin.length && mpin.length === 4
+                            ? 'border-primary bg-blue-50/50 dark:bg-blue-900/10' // Active box style
+                            : 'border-border-light bg-surface-light dark:border-border-dark dark:bg-surface-dark'
+                      }`}>
+                      <Text className="text-lg font-semibold text-text-primary-light dark:text-text-primary-dark">
+                        {confirmMpin[i]
+                          ? '•'
+                          : i === confirmMpin.length && mpin.length === 4 && isKeyboardVisible
+                            ? '|'
+                            : ''}
+                      </Text>
+                    </View>
+                  ))}
+
+                  <TextInput
+                    ref={confirmMpinInputRef}
+                    className="absolute inset-0 h-full w-full opacity-0" // Added h-full w-full to ensure it covers area
+                    keyboardType="number-pad"
+                    maxLength={4}
+                    value={confirmMpin}
+                    onChangeText={(text) => {
+                      const numeric = text.replace(/[^0-9]/g, '');
+                      setConfirmMpin(numeric);
+                      if (numeric.length === 4 && mpin.length === 4) {
+                        Keyboard.dismiss();
+                      }
+                    }}
+                    editable={mpin.length === 4}
+                    returnKeyType="done"
+                    onSubmitEditing={handleRegister}
+                  />
+                </TouchableOpacity>
+
+                {confirmMpin.length === 4 && mpin !== confirmMpin && (
+                  <Text className="mt-2 text-center text-sm text-red-500">
+                    MPINs do not match. Please try again.
+                  </Text>
+                )}
+              </View>
               <TouchableOpacity
                 onPress={handleRegister}
-                className="items-center rounded-xl bg-primary py-3">
+                className={`items-center rounded-xl py-3 ${
+                  mpin.length === 4 && confirmMpin.length === 4 && mpin === confirmMpin && !loading
+                    ? 'bg-primary'
+                    : 'bg-text-secondary-light/50 dark:bg-text-secondary-dark/50'
+                }`}
+                disabled={
+                  mpin.length !== 4 || confirmMpin.length !== 4 || mpin !== confirmMpin || loading
+                }>
                 {loading ? (
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text className="font-bold text-white">Complete Registration</Text>
                 )}
               </TouchableOpacity>
-            </TouchableOpacity>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
+            </View>
+          </KeyboardAwareScrollView>
+        </View>
       </Modal>
     </SafeAreaView>
   );

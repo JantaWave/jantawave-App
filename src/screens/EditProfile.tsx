@@ -13,13 +13,12 @@ import { Picker } from '@react-native-picker/picker';
 import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-// 1. IMPORT SAFE AREA INSETS
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useAppTheme } from '../context/ThemeContext';
 import { useToast } from 'react-native-toast-notifications';
 import { getStates, getCities, getBlocks, getVillages } from '@/src/api/auth';
-import { getPresignedUrl } from '@/src/api';
+import { getPresignedUrl, deleteFromR2 } from '@/src/api';
 import { updateUserProfile } from '../api/user';
 
 export default function EditProfileScreen() {
@@ -27,27 +26,29 @@ export default function EditProfileScreen() {
   const { user, updateUser } = useAuth();
   const { isDark } = useAppTheme();
   const Toast = useToast();
-
-  // 2. GET INSETS
   const insets = useSafeAreaInsets();
 
   const [firstName, setFirstName] = useState(user?.first_name || '');
   const [lastName, setLastName] = useState(user?.last_name || '');
   const [contact] = useState(user?.contact || '');
   const [imageUri, setImageUri] = useState(user?.avatar_url || null);
+  const [tempImageUri, setTempImageUri] = useState(null); // Temporary uploaded image
+  const [tempImageKey, setTempImageKey] = useState(null); // Key for cleanup
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  // Lists and selected IDs
+  // Lists
   const [statesList, setStatesList] = useState([]);
   const [citiesList, setCitiesList] = useState([]);
   const [blocksList, setBlocksList] = useState([]);
   const [villagesList, setVillagesList] = useState([]);
 
-  const [selectedStateId, setSelectedStateId] = useState('');
-  const [selectedCityId, setSelectedCityId] = useState('');
-  const [selectedBlockId, setSelectedBlockId] = useState('');
-  const [selectedVillageId, setSelectedVillageId] = useState('');
+  // Selected IDs
+  const [selectedStateId, setSelectedStateId] = useState(null);
+  const [selectedCityId, setSelectedCityId] = useState(null);
+  const [selectedBlockId, setSelectedBlockId] = useState(null);
+  const [selectedVillageId, setSelectedVillageId] = useState(null);
 
   // Loading flags
   const [loadingStates, setLoadingStates] = useState(false);
@@ -55,7 +56,7 @@ export default function EditProfileScreen() {
   const [loadingBlocks, setLoadingBlocks] = useState(false);
   const [loadingVillages, setLoadingVillages] = useState(false);
 
-  // 1️⃣ Fetch states first, then prefill
+  // Initialize Data (Run once on mount)
   useEffect(() => {
     const initializeData = async () => {
       try {
@@ -64,15 +65,20 @@ export default function EditProfileScreen() {
         const fetchedStates = res?.data || [];
         setStatesList(fetchedStates);
 
-        // ✅ Updated: Access state_name directly from user
+        // FIX 1: Try finding by ID first (more reliable), then by Name
         const currentState = fetchedStates.find(
-          (s) => s.state_name?.toLowerCase() === user?.state_name?.toLowerCase()
+          (s) =>
+            String(s.state_id) === String(user?.state_id) || // Check ID first
+            s.state_name?.toLowerCase() === user?.state_name?.toLowerCase()
         );
 
         if (currentState) {
-          setSelectedStateId(currentState.state_id);
-          // ✅ Updated: Pass 'user' instead of 'address'
-          await fetchCities(currentState.state_id, user);
+          // FIX 2: Convert ID to String explicitly
+          const stateIdString = String(currentState.state_id);
+          setSelectedStateId(stateIdString);
+
+          // Pass the corrected string ID to fetchCities
+          await fetchCities(stateIdString, user);
         }
       } catch (err) {
         Toast.show('Failed to load states', { type: 'danger' });
@@ -84,9 +90,17 @@ export default function EditProfileScreen() {
     if (user) {
       initializeData();
     }
-  }, []); // Run once on mount
 
-  // 2️⃣ Fetch cities and prefill district
+    // Cleanup temp image on unmount if not saved
+    return () => {
+      if (tempImageKey && tempImageUri !== imageUri) {
+        deleteFromR2(tempImageKey).catch(console.error);
+      }
+    };
+  }, []);
+
+  // --- API Fetch Functions ---
+
   const fetchCities = async (stateId, userData = null) => {
     try {
       setLoadingCities(true);
@@ -94,23 +108,22 @@ export default function EditProfileScreen() {
       const fetchedCities = res?.data || [];
       setCitiesList(fetchedCities);
 
-      // ✅ Updated: Access district_name directly from passed user object
-      const currentCity = fetchedCities.find(
-        (c) => c.district_name?.toLowerCase() === userData?.district_name?.toLowerCase()
-      );
-
-      if (currentCity) {
-        setSelectedCityId(currentCity.district_id);
-        await fetchBlocks(currentCity.district_id, userData);
+      if (userData) {
+        const currentCity = fetchedCities.find(
+          (c) => c.district_name?.toLowerCase() === userData?.district_name?.toLowerCase()
+        );
+        if (currentCity) {
+          setSelectedCityId(currentCity.district_id);
+          await fetchBlocks(currentCity.district_id, userData);
+        }
       }
     } catch (err) {
-      Toast.show('Failed to load districts', { type: 'danger' });
+      console.log(err);
     } finally {
       setLoadingCities(false);
     }
   };
 
-  // 3️⃣ Fetch blocks and prefill
   const fetchBlocks = async (districtId, userData = null) => {
     try {
       setLoadingBlocks(true);
@@ -118,23 +131,22 @@ export default function EditProfileScreen() {
       const fetchedBlocks = res?.data || [];
       setBlocksList(fetchedBlocks);
 
-      // ✅ Updated: Access block_name directly
-      const currentBlock = fetchedBlocks.find(
-        (b) => b.block_name?.toLowerCase() === userData?.block_name?.toLowerCase()
-      );
-
-      if (currentBlock) {
-        setSelectedBlockId(currentBlock.block_id);
-        await fetchVillages(currentBlock.block_id, userData);
+      if (userData) {
+        const currentBlock = fetchedBlocks.find(
+          (b) => b.block_name?.toLowerCase() === userData?.block_name?.toLowerCase()
+        );
+        if (currentBlock) {
+          setSelectedBlockId(currentBlock.block_id);
+          await fetchVillages(currentBlock.block_id, userData);
+        }
       }
     } catch (err) {
-      Toast.show('Failed to load blocks', { type: 'danger' });
+      console.log(err);
     } finally {
       setLoadingBlocks(false);
     }
   };
 
-  // 4️⃣ Fetch villages and prefill
   const fetchVillages = async (blockId, userData = null) => {
     try {
       setLoadingVillages(true);
@@ -142,33 +154,70 @@ export default function EditProfileScreen() {
       const fetchedVillages = res?.data || [];
       setVillagesList(fetchedVillages);
 
-      // ✅ Updated: Access village_name directly
-      const currentVillage = fetchedVillages.find(
-        (v) => v.village_name?.toLowerCase() === userData?.village_name?.toLowerCase()
-      );
-
-      if (currentVillage) {
-        setSelectedVillageId(currentVillage.village_id);
+      if (userData) {
+        const currentVillage = fetchedVillages.find(
+          (v) => v.village_name?.toLowerCase() === userData?.village_name?.toLowerCase()
+        );
+        if (currentVillage) {
+          setSelectedVillageId(currentVillage.village_id);
+        }
       }
     } catch (err) {
-      Toast.show('Failed to load villages', { type: 'danger' });
+      console.log(err);
     } finally {
       setLoadingVillages(false);
     }
   };
 
-  // 🔄 Manual selection triggers fetch cascade
-  useEffect(() => {
-    if (selectedStateId && !citiesList.length) fetchCities(selectedStateId);
-  }, [selectedStateId]);
+  // --- Dropdown Handlers ---
 
-  useEffect(() => {
-    if (selectedCityId && !blocksList.length) fetchBlocks(selectedCityId);
-  }, [selectedCityId]);
+  const handleStateChange = (val) => {
+    if (val === null) return;
 
-  useEffect(() => {
-    if (selectedBlockId && !villagesList.length) fetchVillages(selectedBlockId);
-  }, [selectedBlockId]);
+    setSelectedStateId(val);
+
+    setSelectedCityId(null);
+    setSelectedBlockId(null);
+    setSelectedVillageId(null);
+
+    setCitiesList([]);
+    setBlocksList([]);
+    setVillagesList([]);
+
+    fetchCities(val);
+  };
+
+  const handleCityChange = (val) => {
+    if (val === null) return;
+
+    setSelectedCityId(val);
+
+    setSelectedBlockId(null);
+    setSelectedVillageId(null);
+
+    setBlocksList([]);
+    setVillagesList([]);
+
+    fetchBlocks(val);
+  };
+
+  const handleBlockChange = (val) => {
+    if (val === null) return;
+
+    setSelectedBlockId(val);
+
+    setSelectedVillageId(null);
+    setVillagesList([]);
+
+    fetchVillages(val);
+  };
+
+  const handleVillageChange = (val) => {
+    if (val === null) return;
+    setSelectedVillageId(val);
+  };
+
+  // --- Image Logic ---
 
   const pickImage = async () => {
     try {
@@ -177,7 +226,6 @@ export default function EditProfileScreen() {
         Toast.show('Permission denied to access gallery', { type: 'warning' });
         return;
       }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
@@ -186,13 +234,11 @@ export default function EditProfileScreen() {
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        const MAX_SIZE = 16 * 1024 * 1024; // 16 MB
-
+        const MAX_SIZE = 16 * 1024 * 1024;
         if (asset.fileSize && asset.fileSize > MAX_SIZE) {
           Alert.alert('File Too Large', 'Please upload an image smaller than 16 MB.');
           return;
         }
-
         await uploadToR2(asset.uri);
       }
     } catch (e) {
@@ -201,32 +247,33 @@ export default function EditProfileScreen() {
     }
   };
 
-  const uploadToR2 = async (uri: string) => {
+  const uploadToR2 = async (uri) => {
     try {
       setUploading(true);
       const extension = uri.split('.').pop()?.toLowerCase();
       const fileName = `avatar_${user?.id}_${Date.now()}.${extension || 'jpg'}`;
       const fileType = extension === 'png' ? 'image/png' : 'image/jpeg';
-
       const { uploadUrl, fileUrl } = await getPresignedUrl(fileName, fileType, 'avatars');
-
       const response = await fetch(uri);
       const blob = await response.blob();
-
       const uploadResponse = await fetch(uploadUrl, {
         method: 'PUT',
         headers: { 'Content-Type': fileType },
         body: blob,
       });
-
       if (uploadResponse.ok) {
         const finalUrl = fileUrl.startsWith('http') ? fileUrl : `https://${fileUrl}`;
+
+        // Store as temporary image
+        setTempImageUri(finalUrl);
+        setTempImageKey(fileName);
         setImageUri(finalUrl);
-        Toast.show('Profile photo uploaded successfully!', { type: 'success' });
+
+        Toast.show('Photo selected! Remember to save changes.', { type: 'info' });
       } else {
         throw new Error(`Upload failed with status ${uploadResponse.status}`);
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error('Upload Error:', error);
       Alert.alert('Error', 'Failed to upload profile photo. ' + error.message);
     } finally {
@@ -234,40 +281,80 @@ export default function EditProfileScreen() {
     }
   };
 
+  const handleDeleteAvatar = async () => {
+    Alert.alert('Delete Avatar', 'Are you sure you want to remove your profile photo?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            setDeleting(true);
+
+            // If there's an avatar URL, extract the key and delete from bucket
+            if (imageUri && user?.avatar_url) {
+              const urlParts = imageUri.split('/');
+              const fileKey = urlParts[urlParts.length - 1];
+              if (fileKey) {
+                await deleteFromR2(fileKey);
+              }
+            }
+
+            setImageUri(null);
+            setTempImageUri(null);
+            setTempImageKey(null);
+            Toast.show('Avatar removed', { type: 'success' });
+          } catch (error) {
+            console.error('Delete Error:', error);
+            Toast.show('Failed to delete avatar', { type: 'danger' });
+          } finally {
+            setDeleting(false);
+          }
+        },
+      },
+    ]);
+  };
+
   const handleSave = async () => {
     try {
       setSaving(true);
 
+      // Prepare update payload
       const updatePayload = {
         first_name: firstName,
         last_name: lastName,
         avatar_url: imageUri,
-        // Send village ID as 'village' to match backend expectation
         village: selectedVillageId,
       };
 
-      // 1. Call API
       const response = await updateUserProfile(updatePayload);
 
-      // 2. Update Context with the fresh user data from backend
       if (updateUser && response?.data?.user) {
         updateUser(response.data.user);
       }
 
+      // Clear temp image tracking since it's now saved
+      setTempImageUri(null);
+      setTempImageKey(null);
+
       Toast.show('Profile updated successfully!', { type: 'success' });
       router.back();
-    } catch (err: any) {
+    } catch (err) {
       console.error('Save Error:', err);
       Toast.show(err.response?.data?.message || 'Failed to update profile', { type: 'danger' });
+
+      // If save failed and we have a temp image, clean it up
+      if (tempImageKey) {
+        deleteFromR2(tempImageKey).catch(console.error);
+      }
     } finally {
       setSaving(false);
     }
   };
+
   return (
-    <View className="flex-1 bg-white dark:bg-[#0a0a0a]">
-      {/* 3. Dynamic Header Padding 
-          We use padding top based on safe area inset + a little extra (10) for breathing room 
-      */}
+    <View className="flex-1 bg-background-light dark:bg-background-dark">
+      {/* Header */}
       <View
         className="flex-row items-center justify-between bg-gray-100 px-5 pb-5 dark:bg-[#1a1a1a]"
         style={{ paddingTop: Math.max(insets.top, 20) + 10 }}>
@@ -278,16 +365,17 @@ export default function EditProfileScreen() {
         <View className="w-6" />
       </View>
 
-      {/* Content */}
+      {/* Content ScrollView */}
       <ScrollView
         className="flex-1 px-5 pt-6"
         showsVerticalScrollIndicator={false}
-        // 4. Dynamic Bottom Padding for Scroll Content
-        // We add insets.bottom + 20 so the save button is never hidden behind the nav bar
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 20) + 20 }}>
+        contentContainerStyle={{ paddingBottom: 40 }}>
         {/* Profile Picture */}
         <View className="mb-8 items-center">
-          <TouchableOpacity onPress={pickImage} activeOpacity={0.8} disabled={uploading}>
+          <TouchableOpacity
+            onPress={pickImage}
+            activeOpacity={0.8}
+            disabled={uploading || deleting}>
             <View className="relative">
               {imageUri ? (
                 <Image source={{ uri: imageUri }} className="h-28 w-28 rounded-full" />
@@ -296,8 +384,7 @@ export default function EditProfileScreen() {
                   <MaterialIcons name="person" size={56} color="#ffffff" />
                 </View>
               )}
-
-              {uploading ? (
+              {uploading || deleting ? (
                 <View className="absolute bottom-0 right-0 h-10 w-10 items-center justify-center rounded-full bg-blue-500">
                   <ActivityIndicator size="small" color="#fff" />
                 </View>
@@ -311,10 +398,16 @@ export default function EditProfileScreen() {
           <Text className="mt-2 text-xs text-gray-500 dark:text-gray-400">
             Tap to change profile photo
           </Text>
+          {imageUri && (
+            <TouchableOpacity onPress={handleDeleteAvatar} disabled={deleting} className="mt-2">
+              <Text className="text-xs text-red-500">Remove Photo</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Form Fields */}
         <View className="gap-y-5">
+          {/* Name & Contact Fields */}
           <View>
             <Text className="mb-2 text-sm font-semibold text-gray-600 dark:text-gray-400">
               First Name
@@ -327,7 +420,6 @@ export default function EditProfileScreen() {
               className="rounded-xl border border-gray-200 bg-white p-4 text-black dark:border-gray-700 dark:bg-[#1a1a1a] dark:text-white"
             />
           </View>
-
           <View>
             <Text className="mb-2 text-sm font-semibold text-gray-600 dark:text-gray-400">
               Last Name
@@ -340,7 +432,6 @@ export default function EditProfileScreen() {
               className="rounded-xl border border-gray-200 bg-white p-4 text-black dark:border-gray-700 dark:bg-[#1a1a1a] dark:text-white"
             />
           </View>
-
           <View>
             <Text className="mb-2 text-sm font-semibold text-gray-600 dark:text-gray-400">
               Contact
@@ -362,13 +453,14 @@ export default function EditProfileScreen() {
                 <ActivityIndicator className="p-3" color="#2196F3" />
               ) : (
                 <Picker
+                  key={`state-${statesList.length}`}
                   selectedValue={selectedStateId}
-                  onValueChange={(val) => setSelectedStateId(String(val))}
-                  style={{ color: isDark ? '#fff' : '#000' }}
-                  dropdownIconColor={isDark ? '#9CA3AF' : '#6B7280'}>
-                  <Picker.Item label="Select State" value="" />
+                  onValueChange={handleStateChange}
+                  style={{ color: isDark ? '#fff' : '#000' }}>
+                  {selectedStateId === null && <Picker.Item label="Select State" value={null} />}
+
                   {statesList.map((s) => (
-                    <Picker.Item key={s.state_id} label={s.state_name} value={s.state_id} />
+                    <Picker.Item key={s.state_id} label={s.state_name} value={String(s.state_id)} />
                   ))}
                 </Picker>
               )}
@@ -385,17 +477,18 @@ export default function EditProfileScreen() {
                 <ActivityIndicator className="p-3" color="#2196F3" />
               ) : (
                 <Picker
+                  key={`district-${selectedStateId}`}
                   selectedValue={selectedCityId}
-                  onValueChange={(val) => setSelectedCityId(String(val))}
-                  style={{ color: isDark ? '#fff' : '#000' }}
-                  dropdownIconColor={isDark ? '#9CA3AF' : '#6B7280'}
-                  enabled={!!selectedStateId}>
-                  <Picker.Item label="Select District" value="" />
+                  onValueChange={handleCityChange}
+                  enabled={selectedStateId !== null}
+                  style={{ color: isDark ? '#fff' : '#000' }}>
+                  {selectedCityId === null && <Picker.Item label="Select District" value={null} />}
+
                   {citiesList.map((c) => (
                     <Picker.Item
                       key={c.district_id}
                       label={c.district_name}
-                      value={c.district_id}
+                      value={String(c.district_id)}
                     />
                   ))}
                 </Picker>
@@ -413,14 +506,15 @@ export default function EditProfileScreen() {
                 <ActivityIndicator className="p-3" color="#2196F3" />
               ) : (
                 <Picker
+                  key={`block-${selectedCityId}`}
                   selectedValue={selectedBlockId}
-                  onValueChange={(val) => setSelectedBlockId(String(val))}
-                  style={{ color: isDark ? '#fff' : '#000' }}
-                  dropdownIconColor={isDark ? '#9CA3AF' : '#6B7280'}
-                  enabled={!!selectedCityId}>
-                  <Picker.Item label="Select Block" value="" />
+                  onValueChange={handleBlockChange}
+                  enabled={selectedCityId !== null}
+                  style={{ color: isDark ? '#fff' : '#000' }}>
+                  {selectedBlockId === null && <Picker.Item label="Select Block" value={null} />}
+
                   {blocksList.map((b) => (
-                    <Picker.Item key={b.block_id} label={b.block_name} value={b.block_id} />
+                    <Picker.Item key={b.block_id} label={b.block_name} value={String(b.block_id)} />
                   ))}
                 </Picker>
               )}
@@ -437,34 +531,45 @@ export default function EditProfileScreen() {
                 <ActivityIndicator className="p-3" color="#2196F3" />
               ) : (
                 <Picker
+                  key={`village-${selectedBlockId}`}
                   selectedValue={selectedVillageId}
-                  onValueChange={(val) => setSelectedVillageId(String(val))}
-                  style={{ color: isDark ? '#fff' : '#000' }}
-                  dropdownIconColor={isDark ? '#9CA3AF' : '#6B7280'}
-                  enabled={!!selectedBlockId}>
-                  <Picker.Item label="Select Village" value="" />
+                  onValueChange={handleVillageChange}
+                  enabled={selectedBlockId !== null}
+                  style={{ color: isDark ? '#fff' : '#000' }}>
+                  {selectedVillageId === null && (
+                    <Picker.Item label="Select Village" value={null} />
+                  )}
+
                   {villagesList.map((v) => (
-                    <Picker.Item key={v.village_id} label={v.village_name} value={v.village_id} />
+                    <Picker.Item
+                      key={v.village_id}
+                      label={v.village_name}
+                      value={String(v.village_id)}
+                    />
                   ))}
                 </Picker>
               )}
             </View>
           </View>
         </View>
+      </ScrollView>
 
-        {/* Save Button */}
+      {/* Footer Button */}
+      <View
+        className="border-t border-gray-100 bg-white px-5 pt-3 dark:border-gray-800 dark:bg-[#0a0a0a]"
+        style={{ paddingBottom: Math.max(insets.bottom, 20) }}>
         <TouchableOpacity
           disabled={saving || uploading}
           onPress={handleSave}
           activeOpacity={0.9}
-          className="mb-8 mt-8 h-14 w-full items-center justify-center rounded-xl bg-blue-500 shadow-sm disabled:opacity-50">
+          className="h-14 w-full items-center justify-center rounded-xl bg-blue-500 shadow-sm disabled:opacity-50">
           {saving ? (
             <ActivityIndicator size="small" color="#fff" />
           ) : (
             <Text className="text-base font-bold text-white">Save Changes</Text>
           )}
         </TouchableOpacity>
-      </ScrollView>
+      </View>
     </View>
   );
 }

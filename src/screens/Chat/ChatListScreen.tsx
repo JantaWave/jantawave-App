@@ -136,7 +136,7 @@ export default function ChatListScreen() {
   const isDark = colorScheme === 'dark';
 
   return (
-    <View className="flex-1 bg-white dark:bg-[#1a1a1a]">
+    <View className="flex-1 bg-background-light dark:bg-background-dark">
       {/* Reusing your Header */}
       <AppHeader title="Messages" iconName="chat" />
 

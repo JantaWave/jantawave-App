@@ -176,43 +176,60 @@ export default function ProfileScreen() {
     icon,
     color,
     connected,
+    enabled,
   }: {
     platform: string;
     icon: string;
     color: string;
     connected: boolean;
+    enabled: boolean;
   }) => (
     <TouchableOpacity
-      className="mb-3 flex-row items-center justify-between rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-[#333333] dark:bg-[#252525]"
-      onPress={() => (connected ? handleDisconnectSocial(platform) : handleConnectSocial(platform))}
-      disabled={connectingPlatform === platform}>
+      className={`mb-3 flex-row items-center justify-between rounded-xl border p-4 ${
+        enabled
+          ? 'border-gray-200 bg-gray-50 dark:border-[#333333] dark:bg-[#252525]'
+          : 'border-gray-200 bg-gray-100 opacity-60 dark:border-[#333333] dark:bg-[#1f1f1f]'
+      }`}
+      onPress={() => {
+        if (!enabled) return;
+        connected ? handleDisconnectSocial(platform) : handleConnectSocial(platform);
+      }}
+      activeOpacity={enabled ? 0.7 : 1}
+      disabled={!enabled || connectingPlatform === platform}>
       <View className="flex-row items-center">
         <View
           className="mr-3 h-10 w-10 items-center justify-center rounded-full"
           style={{ backgroundColor: `${color}20` }}>
           <MaterialIcons name={icon as any} size={24} color={color} />
         </View>
+
         <View>
           <Text className="text-base font-semibold text-black dark:text-white">
             {capitalize(platform)}
           </Text>
+
           <Text className="text-xs text-gray-500 dark:text-[#888888]">
-            {connected ? 'Connected' : 'Not connected'}
+            {enabled ? (connected ? 'Connected' : 'Not connected') : 'Coming soon'}
           </Text>
         </View>
       </View>
 
+      {/* Right side status */}
       {connectingPlatform === platform ? (
         <ActivityIndicator size="small" color={color} />
-      ) : connected ? (
-        <View className="flex-row items-center">
-          <MaterialIcons name="check-circle" size={20} color="#4CAF50" />
-          <Text className="ml-2 text-sm text-red-500">Disconnect</Text>
-        </View>
+      ) : enabled ? (
+        connected ? (
+          <View className="flex-row items-center">
+            <MaterialIcons name="check-circle" size={20} color="#4CAF50" />
+            <Text className="ml-2 text-sm text-red-500">Disconnect</Text>
+          </View>
+        ) : (
+          <Text className="text-sm font-semibold" style={{ color }}>
+            Connect
+          </Text>
+        )
       ) : (
-        <Text className="text-sm font-semibold" style={{ color }}>
-          Connect
-        </Text>
+        <Text className="text-sm font-semibold text-gray-400">Coming Soon</Text>
       )}
     </TouchableOpacity>
   );
@@ -230,7 +247,7 @@ export default function ProfileScreen() {
   const isLeader = user.role === 'leader' || isLeaderMode?.();
 
   return (
-    <View className="flex-1 bg-white dark:bg-[#1a1a1a]">
+    <View className="flex-1 bg-background-light dark:bg-background-dark">
       {/* Header */}
       <View className="flex-row items-center justify-between bg-gray-100 px-5 pb-5 pt-16 dark:bg-[#252525]">
         <Text className="text-2xl font-bold text-black dark:text-white">Profile</Text>
@@ -310,7 +327,7 @@ export default function ProfileScreen() {
           ) : (
             <View className="flex-1 items-center">
               <Text className="mb-1 text-2xl font-bold text-[#2196F3]">
-                {profileStats?.following_count}
+                {formatCount(profileStats?.following_count)}
               </Text>
               <Text className="text-sm text-gray-500 dark:text-[#888888]">Following</Text>
             </View>
@@ -338,6 +355,7 @@ export default function ProfileScreen() {
               icon="play-circle-filled"
               color="#FF0000"
               connected={socialConnections.youtube}
+              enabled={true}
             />
 
             <SocialPlatformCard
@@ -345,6 +363,7 @@ export default function ProfileScreen() {
               icon="facebook"
               color="#1877F2"
               connected={socialConnections.facebook}
+              enabled={false}
             />
 
             <SocialPlatformCard
@@ -352,6 +371,7 @@ export default function ProfileScreen() {
               icon="camera-alt"
               color="#E4405F"
               connected={socialConnections.instagram}
+              enabled={false}
             />
           </View>
         )}

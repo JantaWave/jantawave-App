@@ -38,11 +38,11 @@ function AppLayout() {
   return (
     // Pass the correct React Navigation theme based on your custom context
     <NavThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
-      <StatusBar
-        style={isDark ? 'light' : 'dark'}
-        hidden={true}
-        // backgroundColor={colors.background}
-      />
+      {/* <StatusBar */}
+      {/*   style={isDark ? 'light' : 'dark'} */}
+      {/*   hidden={true} */}
+      {/*   // backgroundColor={colors.background} */}
+      {/* /> */}
 
       {/* Use theme colors for the main background to avoid white flashes */}
       <View className="flex-1" style={{ backgroundColor: colors.background }}>

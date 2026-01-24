@@ -123,9 +123,7 @@ export default function DiscoverLeadersScreen() {
     <TouchableOpacity
       onPress={() => handleSelectLeader(item)}
       activeOpacity={0.7}
-      className={`mb-3 flex-row items-center justify-between rounded-xl p-3 ${
-        isDark ? 'bg-[#252525]' : 'border border-gray-200 bg-white'
-      }`}>
+      className={`mb-3 flex-row items-center justify-between rounded-xl border-border-light bg-background-light p-3 dark:border-border-dark dark:bg-background-dark`}>
       <View className="flex-row items-center gap-3">
         {item.avatar_url ? (
           <Image source={{ uri: item.avatar_url }} className="h-12 w-12 rounded-full bg-gray-300" />
@@ -156,7 +154,7 @@ export default function DiscoverLeadersScreen() {
   );
 
   return (
-    <View className={`flex-1 ${isDark ? 'bg-[#1a1a1a]' : 'bg-gray-50'}`}>
+    <View className="flex-1 bg-background-light dark:border-border-dark">
       {/* --- HEADER --- */}
       <View
         className={`flex-row items-center gap-3 px-4 pb-4 pt-14 ${isDark ? 'bg-[#1a1a1a]' : 'bg-white shadow-sm'}`}>
