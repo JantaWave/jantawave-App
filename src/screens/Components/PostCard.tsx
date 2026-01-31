@@ -388,13 +388,19 @@ function PostContent({
   onCancelReply,
   renderComment,
 }: any) {
+  // FIXED: Use ONLY likes_count, no fallback to like_count
+  const likesCount = post.likes_count || 0;
+  const commentsCount = post.comments_count || 0;
+
+  // SAFETY: Ensure comments is always an array
+  const safeComments = Array.isArray(comments) ? comments : [];
+
   return (
     <View className="px-3">
-      {/* Likes Count */}
-      {(post.like_count > 0 || post.likes_count > 0) && (
+      {/* Likes Count - FIXED */}
+      {likesCount > 0 && (
         <Text className="mt-2 text-sm font-semibold text-text-primary-light dark:text-text-primary-dark">
-          {(post.like_count || post.likes_count || 0).toLocaleString()}{' '}
-          {(post.like_count || post.likes_count) === 1 ? 'like' : 'likes'}
+          {likesCount.toLocaleString()} {likesCount === 1 ? 'like' : 'likes'}
         </Text>
       )}
 
@@ -418,12 +424,11 @@ function PostContent({
         </View>
       )}
 
-      {/* View Comments */}
-      {(post.comment_count > 0 || post.comments_count > 0) && !expanded && (
+      {/* View Comments - FIXED */}
+      {commentsCount > 0 && !expanded && (
         <TouchableOpacity onPress={onToggleComments} className="mt-1">
           <Text className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
-            View all {post.comment_count || post.comments_count}{' '}
-            {(post.comment_count || post.comments_count) === 1 ? 'comment' : 'comments'}
+            View all {commentsCount} {commentsCount === 1 ? 'comment' : 'comments'}
           </Text>
         </TouchableOpacity>
       )}
@@ -434,7 +439,7 @@ function PostContent({
           {commentsLoading ? (
             <ActivityIndicator size="small" color="#0095f6" />
           ) : (
-            <View>{comments.map(renderComment)}</View>
+            <View>{safeComments.map(renderComment)}</View>
           )}
 
           {replyingTo && (

@@ -81,16 +81,18 @@ export default function AudienceCommunityScreen() {
 
       console.log('fetched response', res?.posts[0]);
 
-      const incoming = res.posts || [];
+      const incoming = (res.posts || []).map((p) => ({
+        ...p,
+        likes_count: Number(p.likes_count ?? 0),
+        comments_count: Number(p.comments_count ?? 0),
+      }));
 
       setPosts((prev) => {
         if (!loadMore) return incoming;
 
-        // 🔥 De-duplicate safely
-        const map = new Map<string, any>();
+        const map = new Map();
         prev.forEach((p) => map.set(p.id, p));
         incoming.forEach((p) => map.set(p.id, p));
-
         return Array.from(map.values());
       });
 
@@ -117,15 +119,16 @@ export default function AudienceCommunityScreen() {
       // Trigger animation immediately for better UX
       if (!isLiked) triggerHeartAnimation(postId);
 
-      // Optimistically update UI
+      // Optimistically update UI - using ONLY likes_count (standardized)
       setPosts((prev) =>
         prev.map((p) =>
           p.id === postId
             ? {
                 ...p,
                 is_liked: !isLiked,
-                likes_count: isLiked ? (p.likes_count || 0) - 1 : (p.likes_count || 0) + 1,
-                like_count: isLiked ? (p.like_count || 0) - 1 : (p.like_count || 0) + 1,
+                likes_count: isLiked
+                  ? Math.max(0, Number(p.likes_count || 0) - 1)
+                  : Number(p.likes_count || 0) + 1,
               }
             : p
         )
@@ -144,8 +147,9 @@ export default function AudienceCommunityScreen() {
             ? {
                 ...p,
                 is_liked: isLiked,
-                likes_count: isLiked ? (p.likes_count || 0) + 1 : (p.likes_count || 0) - 1,
-                like_count: isLiked ? (p.like_count || 0) + 1 : (p.like_count || 0) - 1,
+                likes_count: isLiked
+                  ? (p.likes_count || 0) + 1
+                  : Math.max(0, (p.likes_count || 0) - 1),
               }
             : p
         )
@@ -193,11 +197,19 @@ export default function AudienceCommunityScreen() {
 
     try {
       setCommentsLoading((prev) => ({ ...prev, [postId]: true }));
-      const comments = await getPostComments(postId); // Changed
-      setCommentsData((prev) => ({ ...prev, [postId]: comments || [] }));
+      const comments = await getPostComments(postId);
+
+      // FIXED: Ensure we ALWAYS set an array
+      setCommentsData((prev) => ({
+        ...prev,
+        [postId]: Array.isArray(comments) ? comments : [],
+      }));
     } catch (err) {
       console.error('Fetch comments error:', err);
       Toast.show('Failed to load comments', { type: 'warning' });
+
+      // FIXED: Set empty array on error to prevent .map errors
+      setCommentsData((prev) => ({ ...prev, [postId]: [] }));
     } finally {
       setCommentsLoading((prev) => ({ ...prev, [postId]: false }));
     }
@@ -218,20 +230,21 @@ export default function AudienceCommunityScreen() {
         postId,
         text,
         replyingTo?.postId === postId ? replyingTo.commentId : null
-      ); // Changed
+      );
 
+      // FIXED: Ensure comments array exists before updating
       setCommentsData((prev) => ({
         ...prev,
-        [postId]: [newComment, ...(prev[postId] || [])],
+        [postId]: [newComment, ...(Array.isArray(prev[postId]) ? prev[postId] : [])],
       }));
 
+      // Update comment count - using ONLY comments_count (standardized)
       setPosts((prev) =>
         prev.map((p) =>
           p.id === postId
             ? {
                 ...p,
                 comments_count: (p.comments_count || 0) + 1,
-                comment_count: (p.comment_count || 0) + 1,
               }
             : p
         )
@@ -392,13 +405,14 @@ export default function AudienceCommunityScreen() {
             avatar_url: post.avatar_url,
           }}
           isDark={isDark}
-          /* 🔑 SINGLE SOURCE OF TRUTH FOR VIDEO */
+          /* SINGLE SOURCE OF TRUTH FOR VIDEO */
           isActiveVideo={activeVideoId === post.id}
           isMutedGlobal={isMutedGlobal}
           setIsMutedGlobal={setIsMutedGlobal}
           likeAnimation={likeAnimations[post.id]}
           expanded={!!expandedComments[post.id]}
-          comments={commentsData[post.id] || []}
+          /* FIXED: Always ensure comments is an array */
+          comments={Array.isArray(commentsData[post.id]) ? commentsData[post.id] : []}
           commentsLoading={!!commentsLoading[post.id]}
           commentText={commentText[post.id] || ''}
           replyingTo={replyingTo?.postId === post.id ? replyingTo : null}
